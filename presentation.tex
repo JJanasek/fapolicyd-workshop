@@ -1,0 +1,363 @@
+% fapolicyd Power Users — live session (why / what / how)
+% Full labs: TAKE-HOME.md + demos/
+\documentclass[aspectratio=169,11pt]{beamer}
+
+\IfFileExists{beamerthememetropolis.sty}{%
+  \usetheme{metropolis}%
+}{%
+  \usetheme{default}%
+  \setbeamertemplate{navigation symbols}{}%
+}
+
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\title{fapolicyd for Power Users}
+\subtitle{Why $\cdot$ What $\cdot$ How --- with one live demo}
+\author{SELinux Development Team Workshop}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{How this session works}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Together now}
+      \begin{itemize}
+        \item Why it exists (vs SELinux)
+        \item What the pieces are
+        \item How you operate it
+        \item Setup + one small demo
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{At home later}
+      \begin{itemize}
+        \item Full lab scripts in \texttt{demos/}
+        \item ld.so, integrity, custom rules
+        \item SELinux dual-denial drill
+        \item Ops / metrics deep dive
+      \end{itemize}
+    \end{column}
+  \end{columns}
+  \vspace{1em}
+  \begin{block}{Audience}
+    You already know Linux, packaging, audit, and SELinux.
+    Goal: leave as fapolicyd power users --- correct model first, muscle memory at home.
+  \end{block}
+\end{frame}
+
+\begin{frame}{Agenda}
+  \tableofcontents
+\end{frame}
+
+%=====================================================================
+\section{Why}
+
+\begin{frame}{Two questions, two layers}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{SELinux --- behavior}\\
+      \emph{Given labels, is this access allowed?}
+      \begin{itemize}
+        \item Domain / type / role / MLS
+        \item How the process behaves
+        \item Transitions \& relabeling
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{fapolicyd --- trust}\\
+      \emph{Is this file a known artifact?}
+      \begin{itemize}
+        \item RPM / manual provenance
+        \item Path + size + SHA-256
+        \item First-match rules
+      \end{itemize}
+    \end{column}
+  \end{columns}
+  \vspace{1em}
+  \begin{alertblock}{Complementary}
+    \texttt{bin\_t} on everything in \texttt{/usr/bin} is intentional for SELinux.
+    fapolicyd is the layer that cares whether that binary is \emph{known}.
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}{What it is good for (honest threat model)}
+  \begin{itemize}
+    \item Blocks untrusted code: home-dir malware, pip/npm drops, dropped shells
+    \item Closes ld.so / interpreter tricks against unpackaged content
+    \item Does \textbf{not} stop root from turning it off
+          (same class as SELinux permissive / IMA off)
+    \item Early boot reduces the race; root before login is out of scope
+  \end{itemize}
+\end{frame}
+
+%=====================================================================
+\section{What}
+
+\begin{frame}{Architecture}
+  \centering
+  \begin{tikzpicture}[
+    box/.style={draw,rounded corners,align=center,minimum height=1.0cm,minimum width=2.2cm},
+    arr/.style={-{Latex},thick}
+  ]
+    \node[box] (app) {process\\open/exec};
+    \node[box,right=1.2cm of app] (fan) {fanotify\\PERM};
+    \node[box,right=1.2cm of fan] (dap) {fapolicyd};
+    \node[box,above=0.7cm of dap] (trust) {trust DB};
+    \node[box,below=0.7cm of dap] (rules) {rules};
+    \node[box,right=1.2cm of dap] (dec) {allow / deny};
+
+    \draw[arr] (app) -- (fan);
+    \draw[arr] (fan) -- (dap);
+    \draw[arr] (trust) -- (dap);
+    \draw[arr] (rules) -- (dap);
+    \draw[arr] (dap) -- (dec);
+  \end{tikzpicture}
+  \vspace{0.6em}
+
+  Synchronous on the calling thread --- latency and queue depth matter.\\
+  \textbf{Never} \texttt{ptrace}/\texttt{strace}/\texttt{gdb} the daemon (deadlock).
+\end{frame}
+
+\begin{frame}{Trust database --- the center of gravity}
+  \begin{itemize}
+    \item \texttt{rpmdb} --- RPM payload (filtered); DNF/RPM plugin notifies
+    \item \texttt{filedb} --- manual entries in \texttt{trust.d/}
+    \item Entry: \texttt{type path size sha256}
+    \item Rules match \texttt{trust=1} / \texttt{trust=0}
+  \end{itemize}
+  \vspace{0.6em}
+  \begin{block}{Power-user instinct}
+    Prefer adding trust over writing one-off allow rules.\\
+    Cheaper lookups, clearer intent, less policy churn.
+  \end{block}
+\end{frame}
+
+\begin{frame}{Rules --- first match wins}
+  Recipe: \texttt{decision permission subject : object}
+
+  \vspace{0.4em}
+  Decisions: \texttt{allow}/\texttt{deny} + \texttt{\_audit}/\texttt{\_syslog}/\texttt{\_log}\\
+  Permissions: \texttt{open}, \texttt{execute}, \texttt{any}
+
+  \vspace{0.6em}
+  \begin{itemize}
+    \item Snippets in \texttt{rules.d/} $\xrightarrow{\texttt{fagenrules}}$ \texttt{compiled.rules}
+    \item Default policy: \texttt{known-libs} (stay out of the way if trusted)
+    \item Custom rules when you need \emph{who}/\emph{how}, not just known-ness
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Canonical pattern (shared libs)}
+  \begin{semiverbatim}
+allow perm=open all : ftype=application/x-sharedlib trust=1
+deny_audit perm=open all : ftype=application/x-sharedlib
+
+allow perm=execute all : trust=1
+deny_audit perm=execute all : all
+allow perm=open all : all
+  \end{semiverbatim}
+  Whitelisting by trust --- not SELinux-style confinement.
+\end{frame}
+
+\begin{frame}{Integrity (know the tradeoff)}
+  \begin{tabular}{@{}llp{5.2cm}@{}}
+    \toprule
+    Mode & Cost & Detects \\
+    \midrule
+    none & --- & known path only \\
+    size & free & accidental overwrite \\
+    ima & cheap & hash via IMA \\
+    sha256 & high & content change \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.8em}
+  Default is none. \texttt{size} is often enough.\\
+  Full sha256 under load can hurt latency --- treat as a capacity decision.
+\end{frame}
+
+%=====================================================================
+\section{How}
+
+\begin{frame}{Day-to-day operations}
+  \begin{itemize}
+    \item Inspect: \texttt{--list}, \texttt{--dump-db}, \texttt{--check-status}
+    \item Trust: \texttt{--file add/delete/update} then always \texttt{--update}
+    \item Validate: \texttt{--check-rules [--lint]}, \texttt{--check-trustdb}, \texttt{--check-path}
+    \item Health: \texttt{--check-metrics}, timing start/stop, compact trust DB
+  \end{itemize}
+  \vspace{0.5em}
+  Full cheat sheet + labs $\rightarrow$ take-home pack.
+\end{frame}
+
+\begin{frame}{Safe debugging loop}
+  \begin{enumerate}
+    \item \texttt{systemctl stop fapolicyd}
+    \item \texttt{fapolicyd --permissive --debug-deny}
+    \item Reproduce $\rightarrow$ read \texttt{rule:N dec=deny ...}
+    \item Map N with \texttt{fapolicyd-cli --list}
+    \item Fix trust (preferred) or reorder rules
+    \item Drop \texttt{--permissive} only when denials are intentional
+  \end{enumerate}
+  Need fanotify audit events? At least one audit rule loaded
+  (e.g.\ watch on \texttt{/etc/shadow}).
+\end{frame}
+
+\begin{frame}{SELinux $\times$ fapolicyd triage}
+  \begin{tabular}{@{}p{3.0cm}p{4.0cm}p{4.0cm}@{}}
+    \toprule
+    Symptom & Likely SELinux & Likely fapolicyd \\
+    \midrule
+    AVC & type/perm & --- \\
+    FANOTIFY deny & --- & trust/rule \\
+    EACCES, no AVC & maybe dontaudit & check fanotify \\
+    Breaks after rpm -i & restorecon & trust not updated \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.8em}
+  Same binary can hit \textbf{both}. Teach: \texttt{ausearch -m avc}
+  and \texttt{ausearch -m fanotify}.
+\end{frame}
+
+\begin{frame}{Anti-patterns}
+  \begin{itemize}
+    \item Huge allow-lists instead of fixing trust
+    \item Attaching a debugger to the daemon
+    \item \texttt{integrity=sha256} without capacity planning
+    \item \texttt{ignore\_mounts} on trees interpreters can read
+    \item Editing \texttt{compiled.rules} by hand
+    \item Assuming SELinux allow $\Rightarrow$ fapolicyd allow
+  \end{itemize}
+\end{frame}
+
+%=====================================================================
+\section{Together: setup + small demo}
+
+\begin{frame}{Live: setup (follow along)}
+  Disposable VM, root, SELinux enforcing preferred.
+
+  \begin{enumerate}
+    \item \texttt{dnf install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd}
+    \item Ensure an audit rule exists (else \texttt{deny\_audit} is quiet)
+    \item \texttt{systemctl enable --now fapolicyd}
+    \item Sanity: \texttt{fapolicyd-cli --check-status} and \texttt{--list | head}
+  \end{enumerate}
+  \vspace{0.5em}
+  Scripted: \texttt{sudo demos/00-lab-prep.sh}
+\end{frame}
+
+\begin{frame}[fragile]{Live: one demo --- untrusted binary}
+  The whole story in four commands:
+
+  \begin{semiverbatim}
+cp /usr/bin/ls /opt/fapo-workshop/my-ls
+chmod +x /opt/fapo-workshop/my-ls
+/opt/fapo-workshop/my-ls          # DENY
+
+fapolicyd-cli --file add /opt/fapo-workshop/my-ls \\
+  --trust-file workshop
+fapolicyd-cli --update
+/opt/fapo-workshop/my-ls          # ALLOW
+  \end{semiverbatim}
+
+  Optional peek: \texttt{ausearch --start recent -m fanotify}\\
+  or stop service and run \texttt{fapolicyd --permissive --debug-deny}.
+\end{frame}
+
+\begin{frame}{What we just proved}
+  \begin{itemize}
+    \item Unpackaged copy $\neq$ trusted, even if identical bytes to an RPM file
+    \item Trust DB is the remediation path (not a random allow rule)
+    \item FANOTIFY denials are a different audit class than AVCs
+  \end{itemize}
+\end{frame}
+
+%=====================================================================
+\section{Your turn (at home)}
+
+\begin{frame}{You will configure this yourselves}
+  After today you should be able to, without us:
+  \begin{enumerate}
+    \item Install, enable, and verify health
+    \item Trust an unpackaged \texttt{/opt} app end-to-end
+    \item Add a numbered \texttt{rules.d} drop-in and reload safely
+    \item Debug denials in permissive mode and map \texttt{rule:N}
+    \item Triage AVC vs FANOTIFY on the same failure
+  \end{enumerate}
+  \vspace{0.5em}
+  Cookbook + showcases: \texttt{TAKE-HOME.md}
+\end{frame}
+
+\begin{frame}{Config knobs that matter}
+  \begin{tabular}{@{}p{3.6cm}p{7.2cm}@{}}
+    \toprule
+    Knob & When you touch it \\
+    \midrule
+    \texttt{trust.d/} + CLI & unpackaged software (default remediation) \\
+    \texttt{rules.d/NN-*.rules} & who/how exceptions; keep sparse \\
+    \texttt{integrity} & size / ima / sha256 tradeoff \\
+    \texttt{permissive} & soak before enforce \\
+    \texttt{syslog\_format} & richer deny context (add \texttt{trust}) \\
+    caches / \texttt{q\_size} & only after metrics say so \\
+    \texttt{ignore\_mounts} & last resort; noexec data mounts only \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Cool showcases to run yourself}
+  \begin{enumerate}
+    \item \textbf{Clone attack} --- copy of \texttt{ls} denied; trust heals it
+    \item \textbf{ld.so bypass} --- loader cannot smuggle untrusted ELF
+    \item \textbf{``malware'' drop} --- curl/pip payload in \texttt{\$HOME} dies
+    \item \textbf{Integrity gotcha} --- mutate trusted file; size check bites
+    \item \textbf{Dual stack} --- wrong label \emph{and} untrusted $\Rightarrow$ AVC + FANOTIFY
+    \item \textbf{GID gate} --- trusted binary, still denied by group rule
+    \item \textbf{Live X-ray} --- \texttt{--debug-deny} maps denials to rule numbers
+  \end{enumerate}
+  Scripts: \texttt{demos/} and \texttt{demos/showcases/}
+\end{frame}
+
+\begin{frame}{Take-home map}
+  \begin{itemize}
+    \item \texttt{TAKE-HOME.md} --- config cookbook + showcase gallery
+    \item \texttt{demos/00}--\texttt{09} --- structured drills
+    \item \texttt{demos/showcases/} --- flashy one-liners for demos/talks
+  \end{itemize}
+  \vspace{0.6em}
+  Suggested: finish cookbook once, then pick 3 showcases to present back
+  to the team next week.
+\end{frame}
+
+\begin{frame}{Discussion}
+  \begin{itemize}
+    \item staff\_u / sysadm\_u machines: where does fapolicyd add value?
+    \item How do we teach customers AVC vs FANOTIFY triage?
+    \item Image-mode / ostree: does trust storytelling change?
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{References}
+  \begin{itemize}
+    \item \url{https://github.com/linux-application-whitelisting/fapolicyd}
+    \item \url{https://github.com/linux-application-whitelisting/fapolicyd-tests}
+    \item RHEL Security hardening --- fapolicyd chapter
+    \item Man: \texttt{fapolicyd(8)}, \texttt{fapolicyd.rules(5)}, \texttt{fapolicyd-cli(8)}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+  \centering
+  {\LARGE Questions}\\[1.2em]
+  Slides + take-home:\\
+  \texttt{workshop/fapolicyd-power-users/}
+\end{frame}
+
+\end{document}
