@@ -10,7 +10,9 @@ TINYTEX_BIN = $(CURDIR)/.tools/.TinyTeX/bin/x86_64-linux
 all: $(PDF)
 
 $(PDF): $(TEX)
-	@if command -v pdflatex >/dev/null 2>&1 && kpsewhich beamer.cls >/dev/null 2>&1; then \
+	@mkdir -p .texmf-var .texmf-config; \
+	export TEXMFVAR="$(CURDIR)/.texmf-var" TEXMFCONFIG="$(CURDIR)/.texmf-config" TEXMFCACHE="$(CURDIR)/.texmf-var"; \
+	if command -v pdflatex >/dev/null 2>&1 && kpsewhich beamer.cls >/dev/null 2>&1; then \
 	  PDFLATEX=pdflatex; \
 	elif [ -x "$(TINYTEX_BIN)/pdflatex" ]; then \
 	  export PATH="$(TINYTEX_BIN):$$PATH"; \

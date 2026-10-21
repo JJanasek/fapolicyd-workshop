@@ -1,4 +1,7 @@
 .tools/
+.texmf-var/
+.texmf-config/
+missfont.log
 *.aux
 *.log
 *.nav
@@ -7,3 +10,4 @@
 *.toc
 *.vrb
 *.synctex.gz
+.vendor/

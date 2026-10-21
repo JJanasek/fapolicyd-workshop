@@ -1,38 +1,37 @@
 # fapolicyd Power Users Workshop
 
-Workshop materials for the SELinux development team: live Beamer deck,
-self-serve config cookbook, and cool showcases.
+Live Beamer deck teaches you to **configure and debug** fapolicyd;
+**EXERCISES.md** drills it; showcases are for presenting later.
+
+## How to go through this (important)
+
+```
+1) demos/00-lab-prep.sh          ← once
+2) EXERCISES.md                  ← MAIN PATH (you type, predict, answer)
+3) demos/*.sh                    ← only if stuck (spoilers)
+4) demos/showcases/              ← LAST (flashy demos for presenting)
+```
+
+Do **not** start with showcases. They run themselves; you learn less.
+
+| Path | Role |
+|------|------|
+| `presentation.pdf` | Live talk (why / what / how) |
+| **`EXERCISES.md`** | **Practice — required work** |
+| `TAKE-HOME.md` | Config cookbook reference |
+| `demos/` | Spoiler scripts + showcases |
 
 ## Live session (~60–75 min)
 
-Open `presentation.pdf` — why / what / how + setup + one small demo.
+Open `presentation.pdf`, follow along setup + one small demo.
 
-## At home (configure it yourself)
+## At home
 
-1. Read **[TAKE-HOME.md](TAKE-HOME.md)** (cookbook + showcase gallery).
-2. On a disposable VM:
-
-```bash
-sudo ./demos/00-lab-prep.sh
-sudo ./demos/showcases/01-clone-attack.sh
-sudo ./demos/showcases/05-dual-stack.sh
-```
-
-3. Pick three showcases and present them back to the team.
-
-## Contents
-
-| Path | Purpose |
-|------|---------|
-| `presentation.pdf` / `.tex` | Live deck |
-| `TAKE-HOME.md` | Config cookbook + showcases |
-| `demos/00`–`09` | Structured drills |
-| `demos/showcases/` | ~2-minute flashy demos |
-| `Makefile` | `make` → rebuild PDF |
+1. `sudo ./demos/00-lab-prep.sh`
+2. Work through **[EXERCISES.md](EXERCISES.md)** (predict → do → check → notes)
+3. Later: pick 3 scripts from `demos/showcases/` and present them
 
 ## Rebuild slides
-
-Needs TeX Live with Beamer (or a local TinyTeX):
 
 ```bash
 make

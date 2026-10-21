@@ -3,6 +3,9 @@
 Self-paced pack after the live **why / what / how** session.
 Goal: you can install, configure, debug, and demo fapolicyd without hand-holding.
 
+**Learning order:** `00-lab-prep` → **[`EXERCISES.md`](EXERCISES.md)** (type by hand) → showcases last.  
+`demos/*.sh` are spoilers if you get stuck. This file is the **config reference**.
+
 Use a **disposable VM**. Prefer SELinux **enforcing**.
 **Never** `strace` / `gdb` / `ptrace` the daemon.
 
