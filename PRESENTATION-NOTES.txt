@@ -1,0 +1,597 @@
+================================================================================
+fapolicyd Power Users — podrobné poznámky ke slidům
+================================================================================
+Jak používat:
+  1) Otevři presentation.pdf
+  2) U každého slidu si přečti stejný nadpis tady
+  3) Až projdeš celý text, teprve EXERCISES.md
+
+Slidy jsou záměrně krátké. Tady je to, co bys jinak musel domýšlet.
+
+Slovníček (nauč se hned)
+------------------------
+fapolicyd     = File Access Policy Daemon (userspace demon)
+fanotify      = kernel API: „někdo chce open/exec → počkej na dovolení“
+trust DB      = databáze „známých“ souborů (cesta + size + hash)
+rpmdb         = trust z RPM balíčků
+filedb        = trust, který přidáš ručně
+rules.d       = složka s pravidly (politika allow/deny)
+compiled.rules= slepená politika (nesahá se na ni ručně)
+permissive    = jen loguj, neblokuj (jako SELinux permissive)
+enforcing     = opravdu blokuj
+AVC           = SELinux denial (ausearch -m avc)
+FANOTIFY      = fapolicyd denial (ausearch -m fanotify)
+first match   = první pravidlo, které sedí, vyhrává (zbytek se neřeší)
+
+
+================================================================================
+ÚVOD
+================================================================================
+
+--- Slide: title ---
+Cíl workshopu: po prostudování umět fapolicyd nainstalovat, konfigurovat,
+ladit denials a odlišit je od SELinux AVC. Nejen „vědět, že existuje“.
+
+
+--- Slide: Goal of this talk ---
+Po slidích (+ jednom live příkladu) bys měl umět čtyři věci:
+
+1) Install and verify
+   - dnf install, systemctl enable --now
+   - fapolicyd-cli --check-status (vidíš, že běží, enforcing, trust DB plná)
+
+2) Trust unpackaged software
+   - Software mimo RPM (zkopírovaný binary, /opt app) defaultně NENÍ trusted
+   - Přidáš ho: fapolicyd-cli --file add … && --update
+
+3) Add a rules.d drop-in safely
+   - Když nestačí „známý/neznámý“, ale potřebuješ výjimku (kdo smí, jak)
+   - Soubor /etc/fapolicyd/rules.d/55-neco.rules → fagenrules → reload
+
+4) Debug + triage AVC vs FANOTIFY
+   - Stejný „Permission denied“ může být SELinux NEBO fapolicyd NEBO obojí
+   - Musíš umět podívat se do správného logu
+
+
+--- Slide: How we get there ---
+Struktura decku:
+  Why       = proč fapolicyd vedle SELinuxu
+  What      = co vlastně konfiguruješ (trust, rules, conf)
+  Configure = přesné postupy (to je jádro učení)
+  Live      = jeden end-to-end příklad
+
+
+--- Slide: At home = practice, not first contact ---
+Důležité: znalost konfigurace je V TĚCHTO SLIDECH + v tomto .txt.
+EXERCISES.md = procvičení rukama (ne první vysvětlení).
+showcases/   = až umíš, krátké wow dema pro ostatní.
+
+
+--- Slide: Agenda ---
+Obsah podle sekcí Beameru (Why / What / Configure / Live / You leave able to).
+
+
+================================================================================
+SEKCE: Why
+================================================================================
+
+--- Slide: SELinux asks ---
+SELinux se ptá: „Podle labelů (typů) — smí tenhle proces k tomu objektu?“
+
+Příklad: httpd_t čte httpd_sys_content_t → allow.
+Neřeší: „Odkud se ten binary vzal? Je to oficiální RPM?“
+
+Proto všechno v /usr/bin často dostane bin_t — pro SELinux to dává smysl
+(společné chování „systémových binárek“). Slabina: i malware zkopírovaný
+jako /usr/bin/neco může dostat podobný label po restorecon / kontextu.
+
+
+--- Slide: fapolicyd asks ---
+fapolicyd se ptá: „Je tenhle soubor známý artefakt systému?“
+
+Známý = je v trust DB (typicky z RPM, nebo ručně přidaný).
+Neřeší jemné MAC chování domén — řeší whitelist podle důvěryhodnosti.
+
+
+--- Slide: Use both ---
+Jsou doplňkové:
+  SELinux  = chování (jak proces smí pracovat)
+  fapolicyd = známost (jestli je to trusted soubor)
+
+Stejná akce může dostat:
+  - AVC (SELinux deny)
+  - FANOTIFY deny (fapolicyd)
+  - nebo OBOJÍ najednou
+
+Proto při „Permission denied“ vždy zvaž obě vrstvy.
+
+
+--- Slide: What you gain ---
+Konkrétní výhoda fapolicyd:
+  - Skript/binary v $HOME nebo /tmp bez trustu → nesmí se spustit
+  - Útočník stáhne tool přes curl/pip → není v trust DB → deny
+  - Trik „spustím to přes ld.so“ → shipped rules to chytí (pattern=ld_so)
+
+Whitelist je podle trustu, ne podle „má to bin_t“.
+
+
+--- Slide: Honest limits ---
+fapolicyd NENÍ magie proti rootovi:
+  - root může systemctl stop / změnit rules / vypnout demon
+  - stejně jako setenforce 0 u SELinuxu
+
+Není náhrada za SELinux. Je to další vrstva (application whitelisting).
+
+
+================================================================================
+SEKCE: What you configure
+================================================================================
+
+--- Slide: Three places that matter ---
+Celá konfigurace se prakticky vejde sem:
+
+1) Trust DB
+   - seznam známých souborů
+   - NEJČASTĚJŠÍ věc, kterou měníš
+
+2) /etc/fapolicyd/rules.d/
+   - politika allow/deny
+   - měníš, když potřebuješ výjimky podle uživatele/skupiny/cesty
+
+3) /etc/fapolicyd/fapolicyd.conf
+   - permissive/enforcing, integrity, výkon, ignore_mounts, …
+
+Zbytek (CLI, systemd, audit rule) je provoz kolem toho.
+
+
+--- Slide: Architecture (for intuition) ---
+Tok při open/exec:
+
+  proces volá open/execve
+       → kernel fanotify (permission event) ZASTAVÍ thread
+       → fapolicyd dostane event
+       → podívá se do trust DB + rules
+       → odpoví ALLOW nebo DENY
+       → kernel pustí syscall / vrátí Permission denied
+
+fapolicyd běží v userspace. Kernel sám „trust“ nepočítá — jen čeká na odpověď.
+
+
+--- Slide: Hard rule ---
+NIKDY nedělej: strace -p $(pidof fapolicyd), gdb attach, …
+
+Proč: ptrace pošle SIGSTOP. Daemon nemůže odpovídat na fanotify eventy.
+Celý systém čeká na dovolení k open/exec glibc atd. → deadlock.
+
+Debug jen přes: zastavit service a spustit
+  fapolicyd --permissive --debug-deny
+v popředí (viz Debug loop).
+
+
+--- Slide: Trust --- two backends ---
+Trust DB má dva zdroje:
+
+rpmdb
+  - soubory z RPM
+  - plní se automaticky (rpm/dnf plugin)
+  - při dnf install/update se trust aktualizuje
+
+filedb
+  - to, co přidáš ty (fapolicyd-cli --file add)
+  - leží jako text v /etc/fapolicyd/trust.d/
+  - po změně VŽDY fapolicyd-cli --update
+
+Obojí dohromady = „je trust=1?“ v pravidlech.
+
+
+--- Slide: Trust --- entry ---
+Jeden záznam vypadá zhruba:
+  filedb /opt/app/bin/x  12345  <sha256>
+
+Význam polí:
+  filedb/rpmdb = odkud trust pochází
+  path         = cesta (známý soubor = známá cesta)
+  size         = velikost
+  sha256       = otisk obsahu
+
+V rules pak píšeš trust=1 (je v DB) nebo trust=0 (není).
+
+
+--- Slide: Rules --- recipe ---
+Syntax jednoho pravidla:
+
+  decision permission subject : object
+
+Příklad:
+  allow perm=execute all : trust=1
+  = „kdokoli smí spouštět, pokud objekt je trusted“
+
+  deny_audit perm=execute all : all
+  = „všechno ostatní execute zakáž a zaloguj do auditu“
+
+First match wins:
+  Pravidla se procházejí shora dolů.
+  První, které sedí na subject i object, rozhodne.
+  Pořadí = politika. Špatné pořadí = „moje allow nefunguje“.
+
+
+--- Slide: Rules --- where they live ---
+Správný postup:
+  1) edituj /etc/fapolicyd/rules.d/NN-nazev.rules
+     (NN = číslo pro pořadí, např. 55-…)
+  2) fagenrules  (slepí je do compiled.rules)
+  3) systemctl reload fapolicyd (nebo restart)
+
+NIKDY needituj přímo compiled.rules — při příštím fagenrules to přepíšeš
+nebo bude chaos.
+
+
+--- Slide: Default policy ---
+Fedora/RHEL default je sada „known-libs“:
+  - cílem je být „z cesty“, pokud je software trusted
+  - trusted execute OK
+  - trusted shared libs OK
+  - spousta unpackaged/code-like věcí → deny
+
+Proto zkopírované ls do /opt bez trustu selže, i když bytes = /usr/bin/ls.
+
+
+--- Slide: Integrity in conf ---
+V fapolicyd.conf:
+
+integrity = none   (default)
+  - stačí „je v trust DB pod tou cestou“
+  - neověřuje, jestli se soubor mezitím změnil
+
+integrity = size
+  - porovná velikost s trust DB
+  - chytí omylem přepsaný soubor, levné
+
+integrity = sha256
+  - počítá hash při cache miss
+  - nejpřísnější, nejpomalejší; pod loadem rizikové
+
+integrity = ima
+  - hash z IMA xattr (pokud máš IMA nastavené)
+
+Pro začátek: nech none, nebo zkus size až budeš chtít víc.
+
+
+================================================================================
+SEKCE: Configure  (TOHLE SE NAUČ NAZPAMĚŤ)
+================================================================================
+
+--- Slide: Workflow A --- install ---
+Na čistém systému:
+
+  dnf install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
+
+  fapolicyd-selinux = SELinux policy pro demon samotný
+  rpm-plugin        = při dnf/rpm update trust DB
+
+Pak:
+  - mít aspoň 1 audit rule (viz další slide)
+  - systemctl enable --now fapolicyd
+
+Workshop zkratka:
+  sudo ./demos/00-lab-prep.sh
+  su - fapo          # PAK přepni — deny dema jako root neuvidíš
+
+Proč: shipped rule typicky
+  allow perm=any uid=0 trust=1 : all
+= root + trusted bash smí spouštět i untrusted /opt/.../my-ls.
+Exercise 2 proto BĚŽ JAKO fapo (ne root).
+
+
+--- Slide: Workflow A --- verify ---
+Po startu zkontroluj:
+
+  fapolicyd-cli --check-status
+    Permissive: false     → enforcing (opravdu blokuje)
+    Integrity: none       → default
+    Trust database entries: tisíce → RPM trust načtený OK
+    Denied/Allowed counts → aktivita
+
+  fapolicyd-cli --list | head
+    uvidíš sestavená pravidla (čísla řádků = rule:N při debugu)
+
+
+--- Slide: Audit rule (why) ---
+Pravidla typu deny_audit posílají event do audit systému.
+
+Když audit nemá načtené ŽÁDNÉ rule, fanotify audit eventy často
+nevzniknou / neuvidíš je v ausearch.
+
+Minimální „dummy“ watch (doporučuje i upstream):
+  auditctl -w /etc/shadow -p w
+
+Význam:
+  -w cesta  = sleduj tuhle cestu (audit watch)
+  -p w      = při zápisu
+
+To NEMĚNÍ oprávnění /etc/shadow (nejsou to chmod 775!).
+Jen říká auditu: „zajímej se o zápisy na shadow“ — a tím se audit „probudí“.
+
+
+--- Slide: Workflow B --- trust an /opt app ---
+Tohle je DEFAULT oprava, když něco neběží protože není trusted.
+
+Scénář: máš aplikaci v /opt/myapp (ne z RPM).
+Spouštění binárek/knihoven z ní fapolicyd defaultně zakáže.
+
+
+--- Slide: Trust /opt --- commands ---
+  fapolicyd-cli --file add /opt/myapp --trust-file myapp
+  fapolicyd-cli --update
+
+--file add /opt/myapp
+  - projde strom, spočítá size+sha256, zapíše filedb záznamy
+--trust-file myapp
+  - uloží je do /etc/fapolicyd/trust.d/myapp (čitelný text)
+--update
+  - řekne běžícímu daemonu: znovu načti trust DB
+  - BEZ --update změny v trust.d daemon nevidí
+
+
+--- Slide: Trust /opt --- remember ---
+Zapamatuj si trojici:
+  1) změna trust (add/delete/update souboru)
+  2) --update
+  3) ověř spuštěním / --dump-db
+
+Preferuj trust před psaním allow pravidel.
+Důvod: rychlejší lookup, čitelnější intent, méně chaotická politika.
+
+
+--- Slide: Inspect trust ---
+  fapolicyd-cli --dump-db | grep myapp
+  ls /etc/fapolicyd/trust.d/
+
+dump-db = celá trust DB (rpmdb + filedb)
+trust.d = jen tvé ruční soubory (můžeš je i číst/editovat opatrně)
+
+
+--- Slide: Workflow C --- custom rule ---
+Rules používej, když otázka NENÍ „je to známé?“, ale:
+
+  WHO  = který uživatel/skupina
+  HOW  = jen určitá cesta, jen určitý exe, …
+
+Příklad: ping JE z RPM (trusted), ale nechceš ho dovolit všem —
+jen group wheel.
+
+
+--- Slide: Custom rule --- drop-in ---
+Soubor např. /etc/fapolicyd/rules.d/55-ping.rules:
+
+  allow perm=any gid=wheel : trust=1 path=/usr/bin/ping
+  deny_audit perm=execute all : trust=1 path=/usr/bin/ping
+
+Čtení:
+  1) pokud jsi ve wheel A ping je trusted → allow
+  2) jinak (i když trusted) → deny + audit
+
+Číslo 55- je důležité: musí být PŘED catch-all deny (typicky 90-*).
+Když dáš 95- až za deny-all, tvé allow se nikdy neprovede (first match).
+
+
+--- Slide: Custom rule --- apply ---
+  fagenrules                         # slepí rules.d → compiled.rules
+  fapolicyd-cli --check-rules --lint # syntax + varování
+  systemctl reload fapolicyd         # načti novou politiku
+  fapolicyd-cli --list | grep ping   # ověř, že je v sestavě
+
+
+--- Slide: Custom rule --- safety ---
+  - čísluj soubory podle pořadí
+  - reload je transactional: špatný candidate → zůstane stará politika
+  - drž drop-iny řídké; na běžné „není v RPM“ použij trust
+
+
+--- Slide: Workflow D --- conf knobs ---
+Hlavní soubor režimu: /etc/fapolicyd/fapolicyd.conf
+Po změně obvykle: systemctl restart fapolicyd
+
+
+--- Slide: Conf --- soak then enforce ---
+Na reálném stroji bezpečný postup:
+
+  1) permissive = 1   → restart
+  2) používej systém, sbírej denials (neblokuje)
+  3) oprav trust/rules podle denials
+  4) permissive = 0  → restart (ostře)
+
+Workshop VM můžeš nechat enforcing hned — je disposable.
+
+
+--- Slide: Conf --- integrity ---
+Chceš víc než „cesta je v DB“?
+  integrity = size   ← rozumný další krok
+Neskákej hned na sha256 „protože security“ — latency/deadlock riziko.
+
+
+--- Slide: Decision tree --- denied? ---
+Něco nefunguje (Permission denied / exit != 0):
+
+  1) sudo ausearch --start recent -m avc
+     → něco je? = SELinux problém (label/policy)
+
+  2) sudo ausearch --start recent -m fanotify
+     → něco je? = fapolicyd problém (trust/rule)
+
+  3) nic / nejasné
+     → debug loop (foreground --debug-deny)
+
+
+--- Slide: If FANOTIFY deny ---
+U fapolicyd deny se zeptej:
+
+  Má to být oficiální/známý software?
+    ANO → přidej do trust + --update
+
+  Je to trusted, ale špatný uživatel/skupina/kontext použití?
+    ANO → rules.d drop-in
+
+Špatný reflex: hned psát allow all.
+
+
+--- Slide: Debug loop (1/2) ---
+Bezpečný debug (NIKDY strace):
+
+  systemctl stop fapolicyd
+  fapolicyd --permissive --debug-deny
+
+--permissive = do kernelu odpovídá ALLOW (systém neumře)
+--debug-deny = na terminál sype jen (would-be) denials
+
+V druhém terminálu zopakuj problém.
+Uvidíš řádek jako:
+  rule:9 dec=deny_audit perm=execute ... file=/opt/.../my-ls
+
+
+--- Slide: Debug loop (2/2) ---
+  fapolicyd-cli --list
+  → najdi řádek číslo 9 (nebo nl -ba)
+
+Pak:
+  - chybí trust? → --file add + --update
+  - allow je až pod deny? → přesuň drop-in výš (nižší NN)
+
+Až hotovo:
+  Ctrl-C v debug terminálu
+  systemctl start fapolicyd
+
+
+--- Slide: CLI cheat --- inspect ---
+  --check-status  zdraví, permissive, integrity, počty, fronty
+  --list          sestavená pravidla (rule čísla)
+  --dump-db       obsah trust DB
+
+
+--- Slide: CLI cheat --- change ---
+  --file add/delete/update PATH   mění filedb / trust.d
+  --update                        načti trust do daemonu
+  --check-rules --lint            validuj rules před/po změně
+
+
+--- Slide: Anti-patterns ---
+Nedělej:
+  - hromadu allow místo trust
+  - editaci compiled.rules
+  - předpoklad „SELinux dovolil ⇒ fapolicyd dovolí“
+  - strace/gdb na daemon
+  - ignore_mounts / sha256 bez rozmyslu
+
+
+================================================================================
+SEKCE: Live
+================================================================================
+
+--- Slide: We configure together ---
+Jeden příběh od A do Z:
+  nainstaluj → zkus untrusted kopii ls → deny → trust → allow
+
+
+--- Slide: Setup ---
+  sudo ./demos/00-lab-prep.sh
+nebo ručně install + enable + audit watch (viz Workflow A).
+
+
+--- Slide: Deny ---
+  cp /usr/bin/ls /opt/fapo-workshop/my-ls
+  chmod +x …
+  spustit → DENY
+
+Proč deny, když bytes jsou stejné jako RPM ls?
+  Protože cesta /opt/.../my-ls NENÍ v trust DB.
+  Trust je o známé cestě (+ size/hash), ne o „stejný obsah někde jinde“.
+
+
+--- Slide: Configure fix ---
+  fapolicyd-cli --file add … --trust-file workshop
+  fapolicyd-cli --update
+  spustit → ALLOW
+
+Tohle je přesně Workflow B v praxi.
+
+
+--- Slide: You just configured trust ---
+Udělal jsi:
+  1) diagnostiku (untrusted execute)
+  2) standardní fix (trust)
+  3) ověření
+
+Stejný postup použiješ na /opt aplikace v reálu.
+
+
+================================================================================
+SEKCE: You leave able to
+================================================================================
+
+--- Slide: Checklist ---
+Než skončíš učení, umíš odškrtnout:
+  [ ] install + --check-status
+  [ ] trust /opt stromu
+  [ ] rules.d drop-in + fagenrules + reload
+  [ ] debug s rule:N
+  [ ] AVC vs FANOTIFY triage
+
+
+--- Slide: Practice next ---
+  EXERCISES.md   = cvičení (piš příkazy, tipuj výsledek, piš odpovědi)
+  TAKE-HOME.md   = reference / cookbook
+  demos/showcases/ = až potom, na prezentaci ostatním
+
+
+--- Slide: Discussion ---
+Otázky pro tým (až budeš umět):
+  - kde dává fapolicyd smysl na staff machine vedle SELinuxu?
+  - jak učit customery odlišit AVC a FANOTIFY?
+
+
+--- Slide: References ---
+Upstream + man pages + RHEL hardening kapitola o fapolicyd.
+
+
+--- Slide: Questions ---
+Po přečtení slidů + těchto notes bys měl konfigurovat.
+Svalová paměť = EXERCISES.md.
+
+
+================================================================================
+RYCHLÝ CHEAT (vytiskni / měj vedle)
+================================================================================
+
+Instalace:
+  dnf install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
+  auditctl -w /etc/shadow -p w
+  systemctl enable --now fapolicyd
+
+Trust:
+  fapolicyd-cli --file add /opt/APP --trust-file NAME
+  fapolicyd-cli --update
+
+Rules:
+  edit /etc/fapolicyd/rules.d/55-foo.rules
+  fagenrules && fapolicyd-cli --check-rules --lint
+  systemctl reload fapolicyd
+
+Debug:
+  systemctl stop fapolicyd
+  fapolicyd --permissive --debug-deny
+  # reprodukuj, čti rule:N
+  # Ctrl-C; systemctl start fapolicyd
+
+Triage:
+  ausearch --start recent -m avc
+  ausearch --start recent -m fanotify
+
+Denied?
+  known software missing from trust? → trust
+  who/how exception?                → rules.d
+  SELinux labels?                   → fix SELinux
+
+
+================================================================================
+KONEC — teď jdi na EXERCISES.md
+================================================================================

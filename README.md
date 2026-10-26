@@ -6,18 +6,25 @@ Live Beamer deck teaches you to **configure and debug** fapolicyd;
 ## How to go through this (important)
 
 ```
-1) demos/00-lab-prep.sh          ← once
-2) EXERCISES.md                  ← MAIN PATH (you type, predict, answer)
-3) demos/*.sh                    ← only if stuck (spoilers)
-4) demos/showcases/              ← LAST (flashy demos for presenting)
+1) sudo ./demos/00-lab-prep.sh   ← once as root (creates user "fapo")
+2) su - fapo                     ← deny demos need a non-root user
+3) presentation.pdf
+   + PRESENTATION-NOTES.txt      ← READ BOTH (notes explain every slide)
+4) EXERCISES.md                  ← practice (type, predict, answer)
+5) demos/*.sh                    ← only if stuck (spoilers)
+6) demos/showcases/              ← LAST (presenting)
 ```
+
+Root + trusted bash is often allowed to run untrusted binaries (shipped
+`uid=0 trust=1` rule). Use **`fapo`** for Exercise 2 / deny checks; `sudo` for CLI.
 
 Do **not** start with showcases. They run themselves; you learn less.
 
 | Path | Role |
 |------|------|
-| `presentation.pdf` | Live talk (why / what / how) |
-| **`EXERCISES.md`** | **Practice — required work** |
+| `presentation.pdf` | Short slides |
+| **`PRESENTATION-NOTES.txt`** | **Full explanation per slide (start here if new)** |
+| **`EXERCISES.md`** | Practice |
 | `TAKE-HOME.md` | Config cookbook reference |
 | `demos/` | Spoiler scripts + showcases |
 

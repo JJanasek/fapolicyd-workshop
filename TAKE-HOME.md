@@ -15,13 +15,20 @@ Use a **disposable VM**. Prefer SELinux **enforcing**.
 
 ```bash
 sudo ./demos/00-lab-prep.sh
-# or:
+# creates workshop user "fapo" — then:
+su - fapo
+
+# or manually:
 sudo dnf install -y fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
 sudo auditctl -w /etc/shadow -p w          # so deny_audit actually logs
 sudo systemctl enable --now fapolicyd
 fapolicyd-cli --check-status
 fapolicyd-cli --list | head
 ```
+
+**Non-root for deny demos:** shipped `allow perm=any uid=0 trust=1 : all`
+lets root+trusted shell run untrusted binaries. Use `fapo` to execute;
+`sudo` for `fapolicyd-cli` / trust / ausearch.
 
 Soak tip: run permissive first if this is a real machine:
 
@@ -127,6 +134,7 @@ Scripted under `demos/showcases/`. Each is meant to be **demo-able in ~2 minutes
 | Dual stack | `showcases/05-dual-stack.sh` | Same binary: AVC **and** FANOTIFY |
 | GID gate | `showcases/06-gid-gate.sh` | RPM-trusted `ping`, still denied by group rule |
 | Live X-ray | `showcases/07-xray.md` | Map `rule:N` live with `--debug-deny` |
+| Real app (trs-viewer) | `showcases/08-trs-viewer-app.sh` (+ `.md`) | Trust the `/opt` **tree**; datasets need not be whitelisted |
 
 Also keep the structured drills `demos/01`–`09` if you want a slower curriculum.
 

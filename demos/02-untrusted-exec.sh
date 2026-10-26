@@ -13,11 +13,17 @@ ask() {
 WORK=/opt/fapo-workshop
 BIN="${WORK}/my-ls"
 
+if [[ ${EUID} -eq 0 ]]; then
+  echo "WARNING: you are root. Shipped rule allows uid=0 + trusted shell : all"
+  echo "         → untrusted ${BIN} will often SUCCEED. Prefer: su - fapo"
+  ask "Continue as root anyway? (y/n)"
+fi
+
 mkdir -p "${WORK}"
 cp -a /usr/bin/ls "${BIN}"
 chmod 755 "${BIN}"
 
-echo "Created ${BIN} (copy of /usr/bin/ls)."
+echo "Created ${BIN} (copy of /usr/bin/ls). Running as uid=$(id -u)."
 cmp -s /usr/bin/ls "${BIN}" && echo "Bytes are identical to /usr/bin/ls."
 echo
 ask "PREDICT: will ${BIN} run under enforcing fapolicyd? (y/n + why in your notes)"

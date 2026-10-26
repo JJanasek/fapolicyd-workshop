@@ -2,15 +2,40 @@
 
 **Order for you:**
 
-1. `demos/00-lab-prep.sh` — once  
-2. **This file** — exercises 1 → 6 (type commands yourself)  
-3. Optional: `demos/*.sh` only if stuck (spoilers)  
-4. **Last:** `demos/showcases/` — short demos to show others  
+1. `sudo ./demos/00-lab-prep.sh` — once (as **root**)  
+2. **`su - fapo`** — switch to the workshop user (created by prep)  
+3. **This file** — exercises 1 → 6 (type commands yourself)  
+4. Optional: `demos/*.sh` only if stuck (spoilers)  
+5. **Last:** `demos/showcases/` — short demos to show others  
 
 Showcases are for *presenting*. Exercises are for *learning*.
 
 Use a disposable VM. Prefer SELinux enforcing.  
 **Never** `strace` / `gdb` / `ptrace` fapolicyd.
+
+### Root vs workshop user (read this)
+
+Default shipped rules include something like:
+
+```text
+allow perm=any uid=0 trust=1 : all
+```
+
+Meaning: **root + trusted shell (bash from RPM) may do anything**, including
+running untrusted copies under `/opt`. So as root, Exercise 2 will **not** deny.
+
+| Who | Use for |
+|-----|---------|
+| `fapo` (or other normal user) | Run binaries, feel deny/allow |
+| `root` / `sudo` | `fapolicyd-cli`, `systemctl`, `ausearch`, trust updates |
+
+After prep:
+
+```bash
+su - fapo
+# now do exercises that execute my-ls / scripts
+# when you need sudo: sudo fapolicyd-cli ...
+```
 
 For each exercise: **Predict → Do → Check → Answer** (write answers in a notes file).
 
@@ -47,35 +72,44 @@ fapolicyd-cli --check-path
 
 **Goal:** Feel deny → trust → allow.
 
-**Predict:** You copy `/usr/bin/ls` to `/opt/fapo-workshop/my-ls` (same bytes). Will it run? Why?
+**Who:** run the binary as **`fapo` (non-root)**. Prep/`cp` may use sudo.
+
+**Predict:** You copy `/usr/bin/ls` to `/opt/fapo-workshop/my-ls` (same bytes).
+As a normal user, will it run? Why? (What if you were root instead?)
 
 **Do (type it — don’t paste the whole showcase):**
 
 ```bash
+# still fine as fapo with sudo, or do the copy once as root then su - fapo
 sudo mkdir -p /opt/fapo-workshop
 sudo cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
 sudo chmod 755 /opt/fapo-workshop/my-ls
 cmp -s /usr/bin/ls /opt/fapo-workshop/my-ls && echo identical-bytes
 
-/opt/fapo-workshop/my-ls          # note exit code
+# IMPORTANT: not root here
+id -u    # must NOT be 0
+/opt/fapo-workshop/my-ls          # expect DENY
 echo $?
 
 sudo ausearch --start recent -m fanotify -f /opt/fapo-workshop/my-ls
 ```
 
+If it **runs** and you are uid 0, switch user and retry — do not “fix” trust yet.
+
 **Then heal it yourself** (look up the CLI if needed):
 
-- add the file to the file trust DB under trust-file name `workshop`
-- tell the daemon to reload trust
-- run `my-ls` again
+- add the file to the file trust DB under trust-file name `workshop` (`sudo`)
+- tell the daemon to reload trust (`sudo`)
+- run `my-ls` again **as fapo**
 
 **Check / answer:**
 
-1. Why was identical-to-RPM still denied?
-2. Which audit message type did you see (`avc` vs `fanotify`)?
-3. Exact commands you used to trust + update?
+1. Why was identical-to-RPM still denied (as non-root)?
+2. Why does the same binary often succeed as root without trust?
+3. Which audit message type did you see (`avc` vs `fanotify`)?
+4. Exact commands you used to trust + update?
 
-**Done when:** you did trust/update without looking at a script first.
+**Done when:** you saw deny as `fapo`, then allow after trust — without looking at a script first.
 
 ---
 
@@ -83,11 +117,14 @@ sudo ausearch --start recent -m fanotify -f /opt/fapo-workshop/my-ls
 
 **Goal:** See that a trusted loader does not bless untrusted ELF.
 
+**Who:** as **`fapo`** (non-root), same reason as Exercise 2.
+
 **Predict:** `/usr/lib64/ld-linux-*.so.* /opt/fapo-workshop/my-ls` — allow or deny?
 
 **Do:**
 
 ```bash
+id -u    # must NOT be 0
 # ensure my-ls is NOT trusted for this exercise
 sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls 2>/dev/null
 sudo fapolicyd-cli --update
