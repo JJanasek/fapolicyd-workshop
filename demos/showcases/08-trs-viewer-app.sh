@@ -4,7 +4,9 @@
 #   export TRS_VIEWER_SRC=/path/to/trs-viewer/build   # or path to the binary
 #   sudo ./demos/showcases/08-trs-viewer-app.sh
 # See 08-trs-viewer-app.md for the live GUI step.
+# Deny/allow exec checks use fapo (root would match uid=0 trust=1 : all).
 set -euo pipefail
+. "$(dirname "$0")/../lib.sh"
 
 APP_ROOT=/opt/trs-viewer
 BIN="${APP_ROOT}/bin/trs-viewer"
@@ -58,11 +60,11 @@ fapolicyd-cli --update 2>/dev/null || true
 sleep 1
 
 echo
-echo "=== 1) run without trust (expect DENY) ==="
+echo "=== 1) run without trust as ${WORKSHOP_USER} (expect DENY) ==="
 set +e
-"${BIN}"
+as_user "${BIN}"
 echo "trs-viewer exit=$?"
-"${HELPER}"
+as_user "${HELPER}"
 echo "trs-helper exit=$?"
 set -e
 echo "--- recent FANOTIFY ---"
@@ -75,9 +77,9 @@ fapolicyd-cli --file add "${BIN}" --trust-file "${TRUST_NAME}"
 fapolicyd-cli --update
 sleep 1
 set +e
-"${BIN}"
+as_user "${BIN}"
 echo "trs-viewer exit=$?"
-"${HELPER}"
+as_user "${HELPER}"
 echo "trs-helper exit=$?  (expect DENY — still trust=0)"
 set -e
 
@@ -88,10 +90,11 @@ fapolicyd-cli --file add "${APP_ROOT}" --trust-file "${TRUST_NAME}"
 fapolicyd-cli --update
 sleep 1
 set +e
-"${HELPER}"
+as_user "${HELPER}"
 echo "trs-helper exit=$?  (expect ALLOW)"
-# GUI may fail on headless VM; FANOTIFY must not deny the exec itself.
-timeout 2 "${BIN}" >/dev/null 2>&1
+# GUI may fail headless; FANOTIFY must not deny the exec itself.
+timeout 2 runuser -u "${WORKSHOP_USER}" -- "${BIN}" >/dev/null 2>&1 || \
+  timeout 2 as_user "${BIN}" >/dev/null 2>&1
 echo "trs-viewer short-run exit=$?  (124=timeout OK; FANOTIFY deny usually 126/1)"
 set -e
 fapolicyd-cli --dump-db 2>/dev/null | grep -F "${APP_ROOT}" | head -10 || true
@@ -113,7 +116,7 @@ python3 -c "p=open('${SAMPLE}','rb'); print('open ok, magic=', p.read(6)); p.clo
 echo "(GUI: ${BIN} ${SAMPLE} — datasets need not be whitelisted)"
 
 echo
-echo "Punchline: trust the /opt app *tree* (binary + helpers/.so). Data stays untrusted."
+echo "Trust the /opt app tree (binary + helpers/.so). Data stays untrusted."
 echo "Cleanup:"
 echo "  fapolicyd-cli --file delete ${APP_ROOT} --trust-file ${TRUST_NAME}"
 echo "  fapolicyd-cli --update && rm -rf ${APP_ROOT} ${SAMPLE}"

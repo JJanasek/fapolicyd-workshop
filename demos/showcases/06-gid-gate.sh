@@ -24,5 +24,5 @@ set -e
 
 echo
 echo "Add yourself: sudo usermod -aG ${GROUP} \$USER  && re-login, then retry."
-echo "Punchline: trust answers 'known?'; rules answer 'who/how?'."
+echo "Trust = known?; rules = who/how."
 echo "Cleanup: rm -f ${RULE} && fagenrules && systemctl reload fapolicyd"

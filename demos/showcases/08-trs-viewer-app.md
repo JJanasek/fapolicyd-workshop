@@ -26,13 +26,12 @@ fapolicyd must be **enforcing** (same lab as other showcases).
 sudo -E ./demos/showcases/08-trs-viewer-app.sh
 ```
 
-Narrate:
+Script runs deny/allow checks as user `fapo` (not root).
 
-1. Unpackaged tree under `/opt/trs-viewer` → FANOTIFY deny on exec.
-2. Trust **only** `bin/trs-viewer` → helper ELF in the same tree still denied.
-3. `fapolicyd-cli --file add /opt/trs-viewer` → whole suite runs.
-4. Sample `.npy` in `/var/tmp` is **not** in the trust DB; open still works —
-   whitelist **code**, not every dataset.
+1. Unpackaged `/opt/trs-viewer` → FANOTIFY deny.
+2. Trust only `bin/trs-viewer` → helper still denied.
+3. Trust whole `/opt/trs-viewer` → suite runs.
+4. Sample `.npy` need not be in the trust DB — whitelist code, not datasets.
 
 ## Live GUI (optional, ~1 min)
 
@@ -54,5 +53,4 @@ sudo fapolicyd-cli --update
 sudo rm -rf /opt/trs-viewer /var/tmp/trs-viewer-sample.npy
 ```
 
-**Punchline:** real apps are trees (binary + helpers/libs). Trust `/opt/...`, not
-one path. fapolicyd gates code provenance; your data files stay ordinary files.
+Real apps are trees. Trust `/opt/...`, not one path. Data files stay ordinary files.

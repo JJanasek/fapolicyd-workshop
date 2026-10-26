@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# SHOWCASE: mutate a trusted file under integrity=size → deny, then heal.
+# SHOWCASE: mutate trusted file under integrity=size → deny, then heal.
 # Temporarily edits fapolicyd.conf; restores on exit.
+# Exec checks run as fapo — root bypasses via uid=0 trust=1 subject rule.
 set -euo pipefail
+. "$(dirname "$0")/../lib.sh"
+
 CONF=/etc/fapolicyd/fapolicyd.conf
 BACKUP=$(mktemp)
 WORK=/opt/fapo-workshop
@@ -28,8 +31,8 @@ fi
 systemctl restart fapolicyd
 sleep 1
 
-echo "=== run while trusted + matching size ==="
-"${BIN}"; echo "ok rc=$?"
+echo "=== run as ${WORKSHOP_USER} (trusted, size ok) ==="
+as_user "${BIN}"; echo "ok rc=$?"
 
 echo
 echo "=== mutate (grow file, keep path) ==="
@@ -39,14 +42,14 @@ chmod 755 "${BIN}"
 
 echo "=== run after mutation (expect DENY) ==="
 set +e
-"${BIN}"; echo "exit=$?"
+as_user "${BIN}"; echo "exit=$?"
 set -e
 
 echo
 echo "=== heal trust hashes ==="
 fapolicyd-cli --file update "${BIN}"
 fapolicyd-cli --update
-"${BIN}"; echo "healed rc=$?"
+as_user "${BIN}"; echo "healed rc=$?"
 
 echo
-echo "Punchline: trust is path+size(+hash). Mutation without --file update = deny."
+echo "Trust is path+size(+hash). Mutation without --file update = deny."

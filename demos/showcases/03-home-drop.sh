@@ -1,23 +1,33 @@
 #!/usr/bin/env bash
-# SHOWCASE: "malware" dropped in $HOME (simulated download) cannot run.
-# Run as a normal user for realism; sudo only if ausearch needs it.
+# SHOWCASE: dropped ELF/script under $HOME cannot run.
+# Prefer: su - fapo && ./demos/showcases/03-home-drop.sh
+# If run as root, re-exec under fapo (HOME must be that user's).
 set -euo pipefail
+. "$(dirname "$0")/../lib.sh"
+
+if [[ ${EUID} -eq 0 ]]; then
+  if id "${WORKSHOP_USER}" &>/dev/null; then
+    echo "Re-running as ${WORKSHOP_USER} (root would skip deny)..."
+    exec runuser -u "${WORKSHOP_USER}" -- "$0" "$@"
+  fi
+  echo "WARN: no ${WORKSHOP_USER}; root often ALLOW untrusted home drops." >&2
+fi
 
 DROP="${HOME}/.cache/totally-legit-update"
 mkdir -p "$(dirname "${DROP}")"
 
-echo "=== simulate a dropped ELF (copy of id) ==="
+echo "=== dropped ELF (copy of id) ==="
 cp -a /usr/bin/id "${DROP}"
 chmod 755 "${DROP}"
 
-echo "=== try to run it (expect DENY) ==="
+echo "=== run (expect DENY) ==="
 set +e
 "${DROP}"
 echo "exit=$?"
 set -e
 
 echo
-echo "=== optional: python drop ==="
+echo "=== python drop ==="
 PY="${HOME}/.cache/legit-helper.py"
 cat >"${PY}" <<'PY'
 #!/usr/bin/env python3
@@ -30,6 +40,5 @@ echo "python exit=$?"
 set -e
 
 echo
-echo "Punchline: pip/curl/wget into \$HOME is exactly this class of failure."
-echo "Remediation: don't; or package it; or trust a deliberate /opt tree."
-echo "Audit: sudo ausearch --start recent -m fanotify -f ${DROP}"
+echo "pip/curl into \$HOME hits the same class of deny."
+echo "ausearch: sudo ausearch --start recent -m fanotify -f ${DROP}"

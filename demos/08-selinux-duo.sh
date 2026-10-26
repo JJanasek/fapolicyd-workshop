@@ -1,38 +1,32 @@
 #!/usr/bin/env bash
-# Demo 8: SELinux vs fapolicyd — same action, different denial classes.
-# Best on enforcing SELinux + enforcing fapolicyd.
+# Demo 8: SELinux vs fapolicyd. Spoiler for EXERCISES.md #5.
+# FANOTIFY: needs non-root. AVC: only if the runner is confined (not unconfined_t).
 set -euo pipefail
+. "$(dirname "$0")/lib.sh"
 
 WORK=/var/tmp/fapo-workshop
 mkdir -p "${WORK}"
+chmod 1777 "${WORK}" 2>/dev/null || true
 BIN="${WORK}/dual-deny"
 cp -a /usr/bin/id "${BIN}"
 chmod 755 "${BIN}"
-# Intentionally wrong label for many policies (var_tmp_t executable)
 chcon -t user_tmp_t "${BIN}" 2>/dev/null || chcon -t tmp_t "${BIN}" 2>/dev/null || true
 
 echo "=== contexts ==="
 ls -lZ "${BIN}" || ls -l "${BIN}"
-id -Z || true
+as_user id -Z 2>/dev/null || id -Z || true
 
 echo
-echo "=== attempt exec ==="
+echo "=== exec as ${WORKSHOP_USER} ==="
 set +e
-"${BIN}"
+as_user "${BIN}"
 echo "rc=$?"
 set -e
 
 echo
-echo "=== SELinux AVCs (recent) ==="
-ausearch --start recent -m avc -c id 2>/dev/null | tail -30 || \
-  ausearch --start recent -m avc 2>/dev/null | tail -30 || true
+echo "=== SELinux AVCs (empty if unconfined_t) ==="
+ausearch --start recent -m avc 2>/dev/null | tail -30 || true
 
 echo
-echo "=== fapolicyd FANOTIFY (recent) ==="
+echo "=== fapolicyd FANOTIFY ==="
 ausearch --start recent -m fanotify -f "${BIN}" 2>/dev/null | tail -30 || true
-
-echo
-echo "Teaching points:"
-echo "  * Fixing only restorecon may still leave FANOTIFY deny (untrusted)."
-echo "  * Trusting the file may still leave AVC (wrong type / no exec perm)."
-echo "  * Triage: ausearch -m avc vs -m fanotify — teach both reflexes."

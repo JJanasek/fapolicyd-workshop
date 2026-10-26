@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# SPOILER for Exercise 2 — prefer typing commands from EXERCISES.md yourself.
-# This script pauses so you still have to think.
+# Spoiler for EXERCISES.md #2 — prefer typing that yourself.
+# Setup as root OK; exec via as_user (fapo).
 set -euo pipefail
+. "$(dirname "$0")/lib.sh"
 
 ask() {
-  local prompt=$1
-  local ans
+  local prompt=$1 ans
   read -r -p "$prompt " ans
   echo "  (you said: ${ans})"
 }
@@ -13,50 +13,42 @@ ask() {
 WORK=/opt/fapo-workshop
 BIN="${WORK}/my-ls"
 
-if [[ ${EUID} -eq 0 ]]; then
-  echo "WARNING: you are root. Shipped rule allows uid=0 + trusted shell : all"
-  echo "         → untrusted ${BIN} will often SUCCEED. Prefer: su - fapo"
-  ask "Continue as root anyway? (y/n)"
-fi
-
 mkdir -p "${WORK}"
 cp -a /usr/bin/ls "${BIN}"
 chmod 755 "${BIN}"
 
-echo "Created ${BIN} (copy of /usr/bin/ls). Running as uid=$(id -u)."
-cmp -s /usr/bin/ls "${BIN}" && echo "Bytes are identical to /usr/bin/ls."
+echo "Created ${BIN}. Exec checks run as uid of ${WORKSHOP_USER}."
+cmp -s /usr/bin/ls "${BIN}" && echo "Bytes identical to /usr/bin/ls."
 echo
-ask "PREDICT: will ${BIN} run under enforcing fapolicyd? (y/n + why in your notes)"
+ask "PREDICT: will it run under enforcing fapolicyd as ${WORKSHOP_USER}? (y/n)"
 
 echo
-echo "=== running it now ==="
+echo "=== run as ${WORKSHOP_USER} ==="
 set +e
-"${BIN}"
+as_user "${BIN}"
 rc=$?
 set -e
 echo "exit=${rc}"
 
 echo
-ask "Was that what you predicted? What audit type will ausearch show? (fanotify/avc)"
+ask "Match your prediction? fanotify or avc in ausearch?"
 
 echo
-echo "=== ausearch fanotify ==="
 ausearch --start recent -m fanotify -f "${BIN}" 2>/dev/null | tail -15 || true
 
 echo
-ask "NEXT: what two fapolicyd-cli commands heal this? (type them yourself in another shell, then press Enter here)"
+ask "NEXT: which two fapolicyd-cli commands heal this? (do them in another shell, Enter here)"
 
 echo
-echo "=== verifying trust (script will also trust if still denied) ==="
-if ! "${BIN}" 2>/dev/null; then
-  echo "(still denied — applying spoiler trust)"
+echo "=== verify ==="
+if ! as_user "${BIN}" 2>/dev/null; then
+  echo "(still denied — applying trust)"
   fapolicyd-cli --file add "${BIN}" --trust-file workshop
   fapolicyd-cli --update
   sleep 1
-  "${BIN}"
+  as_user "${BIN}"
 fi
-echo "ok — runs when trusted"
+echo "ok when trusted"
 
 echo
-echo "Write in notes: why identical bytes were denied; commands you used to trust."
-echo "Cleanup: fapolicyd-cli --file delete ${BIN} && fapolicyd-cli --update && rm -f ${BIN}"
+echo "Cleanup: fapolicyd-cli --file delete ${BIN} --trust-file workshop && fapolicyd-cli --update && rm -f ${BIN}"

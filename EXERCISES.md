@@ -126,7 +126,7 @@ If it **runs** and you are uid 0, switch user and retry — do not “fix” tru
 ```bash
 id -u    # must NOT be 0
 # ensure my-ls is NOT trusted for this exercise
-sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls 2>/dev/null
+sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls --trust-file workshop 2>/dev/null
 sudo fapolicyd-cli --update
 
 LDSO=$(find /usr/lib64 /lib64 -name 'ld-linux-*.so.*' | head -1)
@@ -159,7 +159,8 @@ sudo fapolicyd --permissive --debug-deny
 ```
 
 ```bash
-# Terminal B
+# Terminal B — as fapo (not root), or deny will not fire
+su - fapo   # if needed
 cp /usr/bin/ls /tmp/xray-ls && chmod +x /tmp/xray-ls
 /tmp/xray-ls
 ```
@@ -182,13 +183,18 @@ Ctrl-C in A, `sudo systemctl start fapolicyd`.
 
 ## Exercise 5 — Dual stack (SELinux × fapolicyd)
 
-**Goal:** One binary, two denial classes.
+**Goal:** One binary, two denial classes (when possible).
 
-**Predict:** Untrusted ELF under `/var/tmp` with a wrong SELinux type — will you see AVC, FANOTIFY, both, or neither?
+**Who:** exec as **`fapo`**. FANOTIFY needs non-root. AVC needs a *confined*
+SELinux user — if `id -Z` shows `unconfined_t`, you may only see FANOTIFY; that
+is still useful.
+
+**Predict:** Untrusted ELF under `/var/tmp` with a wrong type — AVC, FANOTIFY, both, or neither?
 
 **Do:**
 
 ```bash
+id -u    # not 0
 sudo mkdir -p /var/tmp/fapo-workshop
 sudo cp -a /usr/bin/id /var/tmp/fapo-workshop/dual
 sudo chmod 755 /var/tmp/fapo-workshop/dual
@@ -196,6 +202,7 @@ sudo chcon -t user_tmp_t /var/tmp/fapo-workshop/dual 2>/dev/null \
   || sudo chcon -t tmp_t /var/tmp/fapo-workshop/dual
 
 ls -lZ /var/tmp/fapo-workshop/dual
+id -Z
 /var/tmp/fapo-workshop/dual; echo exit=$?
 
 sudo ausearch --start recent -m avc | tail -20
@@ -204,9 +211,9 @@ sudo ausearch --start recent -m fanotify -f /var/tmp/fapo-workshop/dual | tail -
 
 **Check / answer:**
 
-1. Which messages appeared?
+1. Which messages appeared? If no AVC, what is your SELinux context?
 2. If you only `restorecon`, what still fails?
-3. If you only trust the file, what still fails?
+3. If you only trust the file, what still fails (when confined)?
 
 ---
 
@@ -214,7 +221,10 @@ sudo ausearch --start recent -m fanotify -f /var/tmp/fapo-workshop/dual | tail -
 
 **Goal:** Trust a tree without a workshop script.
 
-**Task:** Create `/opt/myapp/bin/hello` (shell or copied binary). Make it fail, then make it work using **only** the trust DB (no custom allow rule).
+**Who:** prove deny/allow as **`fapo`**; use `sudo` for install/trust.
+
+**Task:** Create `/opt/myapp/bin/hello` (shell or copied binary). Make it fail as
+`fapo`, then make it work using **only** the trust DB (no custom allow rule).
 
 **Deliverable in notes:**
 

@@ -1,32 +1,36 @@
 #!/usr/bin/env bash
-# SHOWCASE: one binary, two denials — AVC and FANOTIFY.
+# SHOWCASE: one binary — try for AVC and FANOTIFY.
+# FANOTIFY needs non-root. AVC needs a confined SELinux user; unconfined_t
+# often shows FANOTIFY only — that is still a useful teaching beat.
 set -euo pipefail
+. "$(dirname "$0")/../lib.sh"
+
 WORK=/var/tmp/fapo-workshop
 mkdir -p "${WORK}"
+chmod 1777 "${WORK}" 2>/dev/null || true
 BIN="${WORK}/dual"
 cp -a /usr/bin/id "${BIN}"
 chmod 755 "${BIN}"
-# Wrong type for many policies (tmp/user_tmp) + untrusted path
 chcon -t user_tmp_t "${BIN}" 2>/dev/null || chcon -t tmp_t "${BIN}" 2>/dev/null || true
 
 echo "=== context ==="
 ls -lZ "${BIN}" 2>/dev/null || ls -l "${BIN}"
-id -Z 2>/dev/null || true
+echo "runner will be: ${WORKSHOP_USER} (or current non-root)"
+as_user id -Z 2>/dev/null || id -Z 2>/dev/null || true
 
 echo
-echo "=== exec (expect failure) ==="
+echo "=== exec as ${WORKSHOP_USER} ==="
 set +e
-"${BIN}"; echo "exit=$?"
+as_user "${BIN}"; echo "exit=$?"
 set -e
 
 echo
-echo "=== SELinux AVCs ==="
-ausearch --start recent -m avc 2>/dev/null | tail -25 || echo "(no AVC / ausearch empty)"
+echo "=== SELinux AVCs (may be empty if runner is unconfined_t) ==="
+ausearch --start recent -m avc 2>/dev/null | tail -25 || echo "(no AVC)"
 
 echo
 echo "=== fapolicyd FANOTIFY ==="
 ausearch --start recent -m fanotify -f "${BIN}" 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
 
 echo
-echo "Punchline: fix ONLY restorecon → still FANOTIFY. Trust ONLY → still AVC."
-echo "Teach customers both reflexes."
+echo "restorecon alone → still FANOTIFY. trust alone → maybe still AVC (if confined)."

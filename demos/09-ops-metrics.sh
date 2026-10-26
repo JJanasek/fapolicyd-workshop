@@ -29,5 +29,4 @@ echo "=== watch_fs vs mounts ==="
 fapolicyd-cli --check-watch_fs || true
 
 echo
-echo "Discuss: when q_size / object cache eviction rates indicate tuning;"
-echo "when ignore_mounts is acceptable (data-only + noexec + no interpreters)."
+echo "Tune q_size/caches from metrics; ignore_mounts only for noexec data mounts."

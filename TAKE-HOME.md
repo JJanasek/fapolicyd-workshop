@@ -121,27 +121,22 @@ sudo systemctl start fapolicyd
 
 ---
 
-## 3. Cool showcases (run & present these)
+## 3. Showcases (after exercises)
 
-Scripted under `demos/showcases/`. Each is meant to be **demo-able in ~2 minutes**.
+Run as root is OK for setup; scripts exec deny-tests as user `fapo` via `demos/lib.sh`.
 
-| Showcase | Script | Punchline |
-|----------|--------|-----------|
-| Clone attack | `showcases/01-clone-attack.sh` | Bit-identical copy of `ls` still denied until trusted |
-| ld.so smuggle | `showcases/02-ldso-smuggle.sh` | Trusted loader cannot run untrusted ELF |
-| Home malware drop | `showcases/03-home-drop.sh` | “Downloaded” payload in `$HOME` cannot exec |
-| Integrity bite | `showcases/04-integrity-bite.sh` | Trusted path, mutated bytes → deny |
-| Dual stack | `showcases/05-dual-stack.sh` | Same binary: AVC **and** FANOTIFY |
-| GID gate | `showcases/06-gid-gate.sh` | RPM-trusted `ping`, still denied by group rule |
-| Live X-ray | `showcases/07-xray.md` | Map `rule:N` live with `--debug-deny` |
-| Real app (trs-viewer) | `showcases/08-trs-viewer-app.sh` (+ `.md`) | Trust the `/opt` **tree**; datasets need not be whitelisted |
+| Showcase | Script |
+|----------|--------|
+| Clone of ls | `demos/showcases/01-clone-attack.sh` |
+| ld.so | `demos/showcases/02-ldso-smuggle.sh` |
+| Home drop | `demos/showcases/03-home-drop.sh` |
+| Integrity | `demos/showcases/04-integrity-bite.sh` |
+| Dual stack | `demos/showcases/05-dual-stack.sh` |
+| GID gate | `demos/showcases/06-gid-gate.sh` |
+| Debug X-ray | `demos/showcases/07-xray.md` |
+| trs-viewer | `demos/showcases/08-trs-viewer-app.sh` (+ `.md`) |
 
-Also keep the structured drills `demos/01`–`09` if you want a slower curriculum.
-
-### Suggested “present back to the team” set
-
-Pick **three**: clone attack, dual stack, and either ld.so or integrity.
-Narrate: what failed, which audit class, how you fixed it (trust vs rule).
+Present three: e.g. clone, dual-stack (or FANOTIFY-only if unconfined), trs-viewer on your host.
 
 ---
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Demo 6: Integrity modes — mutate a trusted file and observe.
-# WARNING: temporarily changes fapolicyd.conf; restores on exit if possible.
+# Demo 6: integrity=size — mutate trusted file, observe deny, heal.
+# Restores fapolicyd.conf on exit. Exec as fapo.
 set -euo pipefail
+. "$(dirname "$0")/lib.sh"
 
 CONF=/etc/fapolicyd/fapolicyd.conf
 BACKUP=$(mktemp)
@@ -24,11 +25,11 @@ chmod 755 "${BIN}"
 fapolicyd-cli --file add "${BIN}" --trust-file workshop
 fapolicyd-cli --update
 
-echo "=== current integrity setting ==="
+echo "=== current integrity ==="
 grep -E '^integrity' "${CONF}" || echo "(default / unset)"
 
 echo
-echo "=== set integrity = size and restart ==="
+echo "=== set integrity = size, restart ==="
 if grep -q '^integrity' "${CONF}"; then
   sed -i 's/^integrity.*/integrity = size/' "${CONF}"
 else
@@ -37,30 +38,23 @@ fi
 systemctl restart fapolicyd
 sleep 1
 
-echo "=== run before mutation ==="
-"${BIN}"; echo "rc=$?"
+echo "=== run as ${WORKSHOP_USER} before mutation ==="
+as_user "${BIN}"; echo "rc=$?"
 
 echo
-echo "=== mutate file (overwrite with larger payload, keep path) ==="
-# Keep executable; change size so size-integrity fails
-{
-  cat /usr/bin/true
-  dd if=/dev/zero bs=1 count=64 2>/dev/null
-} >"${BIN}.new"
+echo "=== mutate (grow file) ==="
+{ cat /usr/bin/true; dd if=/dev/zero bs=1 count=64 2>/dev/null; } >"${BIN}.new"
 mv "${BIN}.new" "${BIN}"
 chmod 755 "${BIN}"
 
-echo "=== run after mutation (expect deny with integrity=size) ==="
+echo "=== run after mutation (expect deny) ==="
 set +e
-"${BIN}"
+as_user "${BIN}"
 echo "rc=$?"
 set -e
 
 echo
-echo "=== refresh trust hashes to heal ==="
+echo "=== heal trust hashes ==="
 fapolicyd-cli --file update "${BIN}"
 fapolicyd-cli --update
-"${BIN}"; echo "healed rc=$?"
-
-echo
-echo "Discuss: size vs ima vs sha256 tradeoffs; deadlock risk of sha256 under load."
+as_user "${BIN}"; echo "healed rc=$?"

@@ -34,4 +34,4 @@ fapolicyd-cli --list | nl -ba | sed -n '1,100p'
 
 Ctrl-C in A, then `systemctl start fapolicyd`.
 
-**Punchline:** every deny has a rule number; power users read the decision, not just “Permission denied”.
+Every deny has a rule number — read the decision, not only “Permission denied”.
