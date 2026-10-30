@@ -40,7 +40,7 @@
 
 \begin{frame}{How we get there}
   \begin{itemize}
-    \item \textbf{Why} --- when to use it (vs SELinux)
+    \item \textbf{Why} --- trust layer beside MAC (short)
     \item \textbf{What} --- trust DB, rules, integrity
     \item \textbf{Configure} --- exact workflows
     \item \textbf{Live} --- one end-to-end example
@@ -62,45 +62,20 @@
 %=====================================================================
 \section{Why}
 
-\begin{frame}{SELinux asks}
-  \centering
-  \vspace{1.2em}
-  {\Large Given labels, is this access allowed?}
-  \vspace{0.8em}
-
-  Behavior · domain / type / MLS
-\end{frame}
-
-\begin{frame}{fapolicyd asks}
-  \centering
-  \vspace{1.2em}
-  {\Large Is this file a known artifact?}
-  \vspace{0.8em}
-
-  Trust · RPM / manual provenance
-\end{frame}
-
-\begin{frame}{Use both}
+\begin{frame}{Beside SELinux, not instead}
   \begin{itemize}
-    \item SELinux: how it behaves
-    \item fapolicyd: whether it is known
-    \item Same action can hit both denials
+    \item SELinux: \emph{behavior} (labels / domains)
+    \item fapolicyd: \emph{known artifact?} (trust / provenance)
+    \item Same action can hit AVC, FANOTIFY, or both
   \end{itemize}
 \end{frame}
 
-\begin{frame}{What you gain}
+\begin{frame}{What you gain / limits}
   \begin{itemize}
-    \item Block home / tmp unpackaged code
-    \item Stop ld.so / interpreter smuggling
-    \item Whitelist by trust, not by labels alone
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{Honest limits}
-  \begin{itemize}
-    \item Root can disable it
-    \item Same class as SELinux permissive
-    \item Not a substitute for MAC
+    \item Block unpackaged home / tmp / \texttt{/opt} code
+    \item Stop \texttt{ld.so} smuggling (\texttt{pattern=ld\_so})
+    \item Whitelist by trust --- not ``it has \texttt{bin\_t}''
+    \item Limits: root can disable it; not a MAC substitute
   \end{itemize}
 \end{frame}
 
@@ -166,6 +141,15 @@ filedb /opt/app/bin/x  SIZE  SHA256
   \vspace{1em}
 
   First match wins
+\end{frame}
+
+\begin{frame}[fragile]{Shipped: \texttt{pattern=ld\_so}}
+  \begin{semiverbatim}
+deny_audit perm=any pattern=ld_so : all
+  \end{semiverbatim}
+  \vspace{0.6em}
+  Trusted loader does \emph{not} bless an untrusted ELF.\\
+  (\texttt{ld.so ./evil} still denied)
 \end{frame}
 
 \begin{frame}{Rules --- where they live}
@@ -301,9 +285,18 @@ fapolicyd-cli --list | grep ping
 \begin{frame}{Decision tree --- denied?}
   \begin{enumerate}
     \item \texttt{ausearch -m AVC} $\rightarrow$ SELinux
-    \item \texttt{ausearch -m FANOTIFY} $\rightarrow$ fapolicyd
+    \item \texttt{ausearch -m FANOTIFY -i} $\rightarrow$ fapolicyd\\
+          {\small (compact events often lack path --- use \texttt{--debug-deny})}
     \item Neither / unclear $\rightarrow$ debug-deny
   \end{enumerate}
+\end{frame}
+
+\begin{frame}{Dual stack}
+  \begin{itemize}
+    \item One binary can hit \textbf{both} AVC and FANOTIFY
+    \item Wrong label $\rightarrow$ AVC; untrusted $\rightarrow$ FANOTIFY
+    \item Fix each layer separately (label/policy vs trust/rules)
+  \end{itemize}
 \end{frame}
 
 \begin{frame}{If FANOTIFY deny}
@@ -317,7 +310,7 @@ fapolicyd-cli --list | grep ping
   \begin{enumerate}
     \item \texttt{systemctl stop fapolicyd}
     \item \texttt{fapolicyd --permissive --debug-deny}
-    \item Reproduce $\rightarrow$ \texttt{rule:N}
+    \item Reproduce $\rightarrow$ \texttt{rule:N} \ldots \texttt{file=}
   \end{enumerate}
 \end{frame}
 
@@ -330,19 +323,11 @@ fapolicyd-cli --list | grep ping
   \end{enumerate}
 \end{frame}
 
-\begin{frame}{CLI cheat --- inspect}
+\begin{frame}{CLI cheat}
   \begin{itemize}
-    \item \texttt{--check-status}
-    \item \texttt{--list}
-    \item \texttt{--dump-db}
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{CLI cheat --- change}
-  \begin{itemize}
-    \item \texttt{--file add/delete/update}
-    \item \texttt{--update}
-    \item \texttt{--check-rules --lint}
+    \item Inspect: \texttt{--check-status}, \texttt{--list}, \texttt{--dump-db}
+    \item Change: \texttt{--file add/delete}, \texttt{--update}
+    \item Check: \texttt{--check-rules --lint}
   \end{itemize}
 \end{frame}
 
@@ -358,30 +343,40 @@ fapolicyd-cli --list | grep ping
 \section{Live}
 
 \begin{frame}{We configure together}
-  Install $\rightarrow$ deny clone of \texttt{ls} $\rightarrow$ trust it $\rightarrow$ allow
+  Install $\rightarrow$ deny clone of \texttt{ls} $\rightarrow$ trust it $\rightarrow$ allow\\[0.6em]
+  {\large Run the binary as \texttt{fapo}, not root}
 \end{frame}
 
 \begin{frame}{Setup}
   \begin{itemize}
-    \item \texttt{sudo demos/00-lab-prep.sh}
-    \item Or install + enable by hand
+    \item \texttt{sudo demos/00-lab-prep.sh} $\rightarrow$ lands as \texttt{fapo}
+    \item Or install + enable by hand, then \texttt{su - fapo}
   \end{itemize}
 \end{frame}
 
-\begin{frame}[fragile]{Deny}
+\begin{frame}{Why not root?}
+  \begin{itemize}
+    \item Shipped: \texttt{allow perm=any uid=0 trust=1 : all}
+    \item Root + trusted shell $\Rightarrow$ untrusted \texttt{/opt} often \textbf{allowed}
+    \item Deny labs need workshop user \texttt{fapo}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Deny (as fapo)}
   \begin{semiverbatim}
+id -u    # must NOT be 0
 sudo cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
 sudo chmod 755 /opt/fapo-workshop/my-ls
-/opt/fapo-workshop/my-ls          # DENY (as fapo)
+/opt/fapo-workshop/my-ls          # DENY
   \end{semiverbatim}
 \end{frame}
 
-\begin{frame}[fragile]{Configure fix}
+\begin{frame}[fragile]{Configure fix (as fapo)}
   \begin{semiverbatim}
 sudo fapolicyd-cli --file add \\
   /opt/fapo-workshop/my-ls --trust-file workshop
 sudo fapolicyd-cli --update
-/opt/fapo-workshop/my-ls          # ALLOW (as fapo)
+/opt/fapo-workshop/my-ls          # ALLOW
   \end{semiverbatim}
 \end{frame}
 

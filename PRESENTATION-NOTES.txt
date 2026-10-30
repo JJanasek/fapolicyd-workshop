@@ -17,36 +17,35 @@ pattern=ld_so special subject: dynamic-linker smuggle path
 
 
 ================================================================================
-WHY
+WHY (short — they already know MAC)
 ================================================================================
 
-SELinux asks: given labels, is this access allowed? (behavior)
-fapolicyd asks: is this file a known artifact? (trust / provenance)
+Beside SELinux, not instead:
+  SELinux = behavior (labels). fapolicyd = known artifact? (trust).
+  One Permission denied → AVC, FANOTIFY, or both.
 
-Use both. One Permission denied can be AVC, FANOTIFY, or both.
-
-You gain: block unpackaged home/tmp/opt code; stop ld.so smuggling;
-whitelist by trust, not “it has bin_t”.
-
-Honest limits: root can disable it; not a MAC substitute.
+Gain: block unpackaged home/tmp/opt; stop ld.so smuggle; trust ≠ bin_t.
+Limits: root can disable it; not a MAC substitute.
 
 
 ================================================================================
 WHAT YOU CONFIGURE
 ================================================================================
 
-Three places:
-  1) Trust DB     — known files
-  2) rules.d/     — who/how policy (first match)
-  3) fapolicyd.conf — permissive, integrity, tuning
+Three places: Trust DB · rules.d/ · fapolicyd.conf
 
 Path: open/exec → fanotify → fapolicyd (trust + rules) → allow/deny
-
 Hard rule: never strace/gdb/ptrace the daemon (SIGSTOP → deadlock).
 
-Trust backends: rpmdb (RPM + plugin) and filedb (you, under trust.d/).
-Rules recipe:  decision  permission  subject : object
-Integrity: none (default) → size (pragmatic) → sha256 (expensive).
+Trust: rpmdb (RPM + plugin) + filedb (you, trust.d/).
+Rules: decision  permission  subject : object   (first match)
+
+Shipped pattern=ld_so:
+  deny_audit perm=any pattern=ld_so : all
+  = linker-smuggle subject → deny any object + audit.
+  Trusted ld.so does NOT bless untrusted ELF.
+
+Integrity: none → size (pragmatic) → sha256 (expensive).
 
 
 ================================================================================
@@ -55,54 +54,48 @@ CONFIGURE
 
 A — Install
   dnf install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
-  ≥1 audit rule (else deny_audit is quiet): auditctl -w /etc/shadow -p w
+  ≥1 audit rule (else deny_audit quiet): auditctl -w /etc/shadow -p w
   systemctl enable --now fapolicyd
   fapolicyd-cli --check-status / --list
 
-B — Trust unpackaged /opt (default remediation)
-  fapolicyd-cli --file add /opt/myapp --trust-file myapp
-  fapolicyd-cli --update
+B — Trust /opt (default remediation)
+  --file add /opt/myapp --trust-file myapp && --update
   Prefer trust trees over allow-rule sprawl.
 
-C — rules.d drop-in (when you need who/how, not just “known”)
-  Number file above catch-all deny (e.g. 55-… before 90-…).
-  fagenrules && fapolicyd-cli --check-rules --lint && systemctl reload fapolicyd
+C — rules.d (who/how, not just “known”)
+  Number above catch-all deny. fagenrules → --check-rules --lint → reload.
   Bad candidate → previous ruleset kept.
 
-D — Conf
-  permissive=1 soak → fix → permissive=0
-  integrity=size before sha256
+D — Conf: permissive=1 soak → fix → 0; integrity=size before sha256
 
 Denied?
   1) ausearch -m AVC
   2) ausearch -m FANOTIFY -i
      Compact FANOTIFY often has NO path (-f may miss).
-     Path + rule:N → foreground --debug-deny
-  3) unclear → stop service; fapolicyd --permissive --debug-deny; reproduce
+     Path + rule:N → --debug-deny
+  3) unclear → stop; fapolicyd --permissive --debug-deny; reproduce
 
-FANOTIFY deny:
-  Should be known software? → trust + --update
-  Who/how exception? → rules.d
+Dual stack: one binary can hit BOTH.
+  Wrong label → AVC; untrusted → FANOTIFY. Fix each layer.
 
-Anti-patterns: allow sprawl; edit compiled.rules; assume SELinux allow ⇒ fapolicyd allow.
+FANOTIFY deny: known software? → trust. Who/how? → rules.d.
+
+Anti-patterns: allow sprawl; edit compiled.rules; SELinux allow ⇒ fapolicyd allow.
 
 
 ================================================================================
-LIVE + LAB NOTES
+LIVE
 ================================================================================
 
-Prep: sudo ./demos/00-lab-prep.sh
-  Creates user fapo (non-root deny labs), passwordless sudo, audit watch,
-  maps fapo → staff_u so dual-stack can produce AVC (not only unconfined).
+Prep: sudo ./demos/00-lab-prep.sh → lands as fapo (staff_u for AVC labs).
 
-Shipped roughly: allow perm=any uid=0 trust=1 : all
-  → root + trusted shell often ALLOWS untrusted /opt copies. Use fapo for deny.
+Why not root?
+  allow perm=any uid=0 trust=1 : all
+  → root + trusted shell often ALLOWS untrusted /opt. Deny as fapo.
 
-ld_so rule (read left → right):
-  deny_audit perm=any pattern=ld_so : all
-  = when subject looks like dynamic-linker smuggle, deny any object + audit.
+Live: id -u ≠ 0 → copy ls → DENY → --file add + --update → ALLOW.
 
-Reset lab junk: sudo ./demos/99-cleanup.sh
+Reset: sudo ./demos/99-cleanup.sh
 
 
 ================================================================================
@@ -113,6 +106,6 @@ LEAVE ABLE TO
 [ ] Trust an /opt tree + --update
 [ ] Add / reload a rules.d drop-in
 [ ] Map rule:N via --debug-deny when needed
-[ ] Triage AVC vs FANOTIFY
+[ ] Triage AVC vs FANOTIFY (dual stack)
 
-Next: EXERCISES.md → TAKE-HOME.md cookbook → demos/showcases/ (present only)
+Next: EXERCISES.md → TAKE-HOME.md → demos/showcases/
