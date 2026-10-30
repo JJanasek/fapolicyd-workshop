@@ -300,8 +300,8 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}{Decision tree --- denied?}
   \begin{enumerate}
-    \item \texttt{ausearch -m avc} $\rightarrow$ SELinux
-    \item \texttt{ausearch -m fanotify} $\rightarrow$ fapolicyd
+    \item \texttt{ausearch -m AVC} $\rightarrow$ SELinux
+    \item \texttt{ausearch -m FANOTIFY} $\rightarrow$ fapolicyd
     \item Neither / unclear $\rightarrow$ debug-deny
   \end{enumerate}
 \end{frame}
@@ -370,18 +370,18 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}[fragile]{Deny}
   \begin{semiverbatim}
-cp /usr/bin/ls /opt/fapo-workshop/my-ls
-chmod +x /opt/fapo-workshop/my-ls
-/opt/fapo-workshop/my-ls          # DENY
+sudo cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
+sudo chmod 755 /opt/fapo-workshop/my-ls
+/opt/fapo-workshop/my-ls          # DENY (as fapo)
   \end{semiverbatim}
 \end{frame}
 
 \begin{frame}[fragile]{Configure fix}
   \begin{semiverbatim}
-fapolicyd-cli --file add \\
+sudo fapolicyd-cli --file add \\
   /opt/fapo-workshop/my-ls --trust-file workshop
-fapolicyd-cli --update
-/opt/fapo-workshop/my-ls          # ALLOW
+sudo fapolicyd-cli --update
+/opt/fapo-workshop/my-ls          # ALLOW (as fapo)
   \end{semiverbatim}
 \end{frame}
 

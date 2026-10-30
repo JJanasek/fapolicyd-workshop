@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SHOWCASE: one binary — try for AVC and FANOTIFY.
-# FANOTIFY needs non-root. AVC needs a confined SELinux user; unconfined_t
-# often shows FANOTIFY only — that is still a useful teaching beat.
+# FANOTIFY needs non-root. Prep maps fapo → staff_u so AVC can fire;
+# if id -Z is still unconfined_t, you may see FANOTIFY only.
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
 
@@ -26,11 +26,11 @@ set -e
 
 echo
 echo "=== SELinux AVCs (may be empty if runner is unconfined_t) ==="
-ausearch --start recent -m avc 2>/dev/null | tail -25 || echo "(no AVC)"
+ausearch --start recent -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
 
 echo
-echo "=== fapolicyd FANOTIFY ==="
-ausearch --start recent -m fanotify -f "${BIN}" 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
+echo "=== fapolicyd FANOTIFY (no -f: compact events often lack path) ==="
+ausearch --start recent -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
 
 echo
 echo "restorecon alone → still FANOTIFY. trust alone → maybe still AVC (if confined)."

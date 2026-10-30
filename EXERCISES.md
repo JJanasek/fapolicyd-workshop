@@ -1,131 +1,83 @@
-# Exercises — work through these (don’t just run scripts)
+# Exercises — configure fapolicyd (type commands yourself)
 
-**Order for you:**
+**Audience:** SELinux / policy people. Goal = trust, rules.d, triage FANOTIFY vs AVC.
 
-1. `sudo ./demos/00-lab-prep.sh` — once (as **root**)  
-2. **`su - fapo`** — switch to the workshop user (created by prep)  
-3. **This file** — exercises 1 → 6 (type commands yourself)  
-4. Optional: `demos/*.sh` only if stuck (spoilers)  
-5. **Last:** `demos/showcases/` — short demos to show others  
+**Order:**
 
-Showcases are for *presenting*. Exercises are for *learning*.
+1. `sudo ./demos/00-lab-prep.sh` — once as root (creates confined `fapo`)  
+2. You should land as **`fapo`** (prep does `su -`)  
+3. Core path **1 → 2 → 3 → 5 → 6**  
+4. Exercise 4 — optional (`--debug-deny` / `rule:N`)  
+5. `demos/showcases/` — present later (3 scripts)  
+6. Reset: `sudo ./demos/99-cleanup.sh`
 
-Use a disposable VM. Prefer SELinux enforcing.  
-**Never** `strace` / `gdb` / `ptrace` fapolicyd.
+Disposable VM. SELinux enforcing. **Never** `strace` / `gdb` / `ptrace` fapolicyd.
 
-### Root vs workshop user (read this)
+### Root vs `fapo`
 
-Default shipped rules include something like:
-
-```text
-allow perm=any uid=0 trust=1 : all
-```
-
-Meaning: **root + trusted shell (bash from RPM) may do anything**, including
-running untrusted copies under `/opt`. So as root, Exercise 2 will **not** deny.
+Shipped roughly: `allow perm=any uid=0 trust=1 : all`  
+→ root + trusted bash often **allows** untrusted `/opt` copies. Deny labs need **`fapo`**.
 
 | Who | Use for |
 |-----|---------|
-| `fapo` (or other normal user) | Run binaries, feel deny/allow |
-| `root` / `sudo` | `fapolicyd-cli`, `systemctl`, `ausearch`, trust updates |
+| `fapo` | Run binaries, feel deny/allow |
+| `sudo` | `fapolicyd-cli`, `systemctl`, `ausearch`, trust / rules |
 
-After prep:
+Always **`sudo fapolicyd-cli`** here. Prep maps `fapo` → `staff_u` so dual-stack can emit AVC.
 
-```bash
-su - fapo
-# now do exercises that execute my-ls / scripts
-# when you need sudo: sudo fapolicyd-cli ...
-```
-
-For each exercise: **Predict → Do → Check → Answer** (write answers in a notes file).
+For each exercise: **Predict → Do → Check** (notes file).
 
 ---
 
-## Exercise 1 — Can you read the system?
+## Exercise 1 — Read the system
 
-**Goal:** Know what “healthy fapolicyd” looks like.
-
-**Predict:** Roughly how many trust DB entries do you expect on a minimal Fedora install? (order of magnitude)
-
-**Do:**
+**Goal:** Healthy fapolicyd looks like…
 
 ```bash
 systemctl is-active fapolicyd
-fapolicyd-cli --check-status
-fapolicyd-cli --list | head -30
-fapolicyd-cli --dump-db | head -5
-fapolicyd-cli --check-path
+sudo fapolicyd-cli --check-status
+sudo fapolicyd-cli --list | head -30
+sudo fapolicyd-cli --dump-db | head -5
+sudo fapolicyd-cli --check-path
 ```
 
-**Check / answer in your notes:**
-
-1. Is `Permissive` true or false? What does that mean for denials?
-2. What is `Integrity` set to?
-3. How many `Trust database entries`?
-4. Find the rule that looks like a catch-all execute deny. What is its number in `--list`?
-
-**Done when:** you can explain status + point at the deny-execute rule without reading docs.
+**Answer:** Permissive? Integrity? Trust entry count? Catch-all execute deny line #?
 
 ---
 
 ## Exercise 2 — Clone of `ls` (core loop)
 
-**Goal:** Feel deny → trust → allow.
-
-**Who:** run the binary as **`fapo` (non-root)**. Prep/`cp` may use sudo.
-
-**Predict:** You copy `/usr/bin/ls` to `/opt/fapo-workshop/my-ls` (same bytes).
-As a normal user, will it run? Why? (What if you were root instead?)
-
-**Do (type it — don’t paste the whole showcase):**
+**Goal:** deny → trust → allow. Run as **`fapo`**.
 
 ```bash
-# still fine as fapo with sudo, or do the copy once as root then su - fapo
 sudo mkdir -p /opt/fapo-workshop
 sudo cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
 sudo chmod 755 /opt/fapo-workshop/my-ls
 cmp -s /usr/bin/ls /opt/fapo-workshop/my-ls && echo identical-bytes
 
-# IMPORTANT: not root here
 id -u    # must NOT be 0
 /opt/fapo-workshop/my-ls          # expect DENY
 echo $?
 
-sudo ausearch --start recent -m fanotify -f /opt/fapo-workshop/my-ls
+# Compact FANOTIFY often has no path — prefer:
+sudo ausearch --start recent -m FANOTIFY -i
 ```
 
-If it **runs** and you are uid 0, switch user and retry — do not “fix” trust yet.
+If empty: `sudo auditctl -l` (need ≥1 rule), re-deny, search again.  
+**Path / `rule:N`** → Exercise 4 (`--debug-deny`).
 
-**Then heal it yourself** (look up the CLI if needed):
+**Heal:** `--file add … --trust-file workshop` + `--update`; run again as `fapo`.
 
-- add the file to the file trust DB under trust-file name `workshop` (`sudo`)
-- tell the daemon to reload trust (`sudo`)
-- run `my-ls` again **as fapo**
-
-**Check / answer:**
-
-1. Why was identical-to-RPM still denied (as non-root)?
-2. Why does the same binary often succeed as root without trust?
-3. Which audit message type did you see (`avc` vs `fanotify`)?
-4. Exact commands you used to trust + update?
-
-**Done when:** you saw deny as `fapo`, then allow after trust — without looking at a script first.
+**Answer:** Why identical-to-RPM denied? Why root often skips deny? Commands used?
 
 ---
 
 ## Exercise 3 — ld.so smuggle
 
-**Goal:** See that a trusted loader does not bless untrusted ELF.
-
-**Who:** as **`fapo`** (non-root), same reason as Exercise 2.
-
-**Predict:** `/usr/lib64/ld-linux-*.so.* /opt/fapo-workshop/my-ls` — allow or deny?
-
-**Do:**
+**Goal:** Trusted loader does not bless untrusted ELF. As **`fapo`**.
 
 ```bash
-id -u    # must NOT be 0
-# ensure my-ls is NOT trusted for this exercise
+id -u
 sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls --trust-file workshop 2>/dev/null
 sudo fapolicyd-cli --update
 
@@ -134,67 +86,41 @@ echo "loader=$LDSO"
 "$LDSO" /opt/fapo-workshop/my-ls
 echo $?
 
-fapolicyd-cli --list | grep -n ld_so
+sudo fapolicyd-cli --list | grep -n ld_so
 ```
 
-**Check / answer:**
-
-1. Did ld.so help? Why / why not?
-2. Which rule pattern is responsible?
+Read: `deny_audit perm=any pattern=ld_so : all`  
+= subject looks like linker smuggle → deny any object + audit.
 
 ---
 
-## Exercise 4 — Debug X-ray (forced understanding)
+## Exercise 4 — Debug X-ray *(optional)*
 
-**Goal:** Map `rule:N` to a real rule line.
-
-**Predict:** Which rule number will deny `/tmp/xray-ls`? (guess from `--list` first)
-
-**Do:**
+Same deny as Ex2, deeper: `--debug-deny` for `file=` / `rule:N` (ausearch often omits both).
 
 ```bash
 # Terminal A
 sudo systemctl stop fapolicyd
 sudo fapolicyd --permissive --debug-deny
-```
 
-```bash
-# Terminal B — as fapo (not root), or deny will not fire
-su - fapo   # if needed
+# Terminal B as fapo
 cp /usr/bin/ls /tmp/xray-ls && chmod +x /tmp/xray-ls
 /tmp/xray-ls
 ```
 
-In A, find `rule:N`. Then:
-
-```bash
-fapolicyd-cli --list | nl -ba | sed -n '1,100p'
-```
-
-Ctrl-C in A, `sudo systemctl start fapolicyd`.
-
-**Check / answer:**
-
-1. What was `N`?
-2. Paste the matching rule line into your notes.
-3. Why is `--permissive` safer while learning?
+Map `N`: `sudo fapolicyd-cli --list | nl -ba | sed -n '1,100p'`  
+Ctrl-C → `sudo systemctl start fapolicyd` → `rm -f /tmp/xray-ls`.
 
 ---
 
 ## Exercise 5 — Dual stack (SELinux × fapolicyd)
 
-**Goal:** One binary, two denial classes (when possible).
+**Goal:** One binary, two denial classes when confined.
 
-**Who:** exec as **`fapo`**. FANOTIFY needs non-root. AVC needs a *confined*
-SELinux user — if `id -Z` shows `unconfined_t`, you may only see FANOTIFY; that
-is still useful.
-
-**Predict:** Untrusted ELF under `/var/tmp` with a wrong type — AVC, FANOTIFY, both, or neither?
-
-**Do:**
+Prep should give `staff_u` — check `id -Z` (not `unconfined_t`).
 
 ```bash
-id -u    # not 0
+id -u; id -Z
 sudo mkdir -p /var/tmp/fapo-workshop
 sudo cp -a /usr/bin/id /var/tmp/fapo-workshop/dual
 sudo chmod 755 /var/tmp/fapo-workshop/dual
@@ -202,62 +128,57 @@ sudo chcon -t user_tmp_t /var/tmp/fapo-workshop/dual 2>/dev/null \
   || sudo chcon -t tmp_t /var/tmp/fapo-workshop/dual
 
 ls -lZ /var/tmp/fapo-workshop/dual
-id -Z
 /var/tmp/fapo-workshop/dual; echo exit=$?
 
-sudo ausearch --start recent -m avc | tail -20
-sudo ausearch --start recent -m fanotify -f /var/tmp/fapo-workshop/dual | tail -20
+sudo ausearch --start recent -m AVC | tail -20
+sudo ausearch --start recent -m FANOTIFY -i | tail -20
 ```
 
-**Check / answer:**
-
-1. Which messages appeared? If no AVC, what is your SELinux context?
-2. If you only `restorecon`, what still fails?
-3. If you only trust the file, what still fails (when confined)?
+**Answer:** Which messages? Only `restorecon` → what still fails? Only trust → what still fails?
 
 ---
 
-## Exercise 6 — Your own `/opt` app (config yourself)
+## Exercise 6 — Configure yourself (trust + rules.d)
 
-**Goal:** Trust a tree without a workshop script.
+### 6a — Trust an `/opt` tree
 
-**Who:** prove deny/allow as **`fapo`**; use `sudo` for install/trust.
+Create `/opt/myapp/bin/hello` (script or copied binary). Fail as `fapo`, then allow using **only** the trust DB (no custom allow).
 
-**Task:** Create `/opt/myapp/bin/hello` (shell or copied binary). Make it fail as
-`fapo`, then make it work using **only** the trust DB (no custom allow rule).
+Notes deliverable: commands, dump-db line, before/after exit codes.
 
-**Deliverable in notes:**
+### 6b — `rules.d` drop-in *(required)*
 
+Allow `ping` only for a group you create. Reload safely. Prove deny, then allow after `usermod -aG` + re-login.
+
+Hint shape (place **above** catch-all deny):
+
+```text
+allow perm=any gid=YOURGROUP : trust=1 path=/usr/bin/ping
+deny_audit perm=execute all : trust=1 path=/usr/bin/ping
 ```
-commands used:
-...
-proof it was untrusted then trusted:
-  dump-db line:
-  before exit code / after exit code:
-```
 
-**Stretch:** Write a `rules.d/55-…` rule that allows `ping` only for a group you create. Reload safely. Prove deny then allow after `usermod -aG` + re-login.
+`fagenrules` → `--check-rules --lint` → `systemctl reload fapolicyd`.
 
 ---
 
 ## After exercises — showcases
 
-Only now run flashy scripts (they auto-drive; use them to *demo*, not to learn):
+Present only (auto-drive):
 
 ```bash
-sudo ./demos/showcases/01-clone-attack.sh
-sudo ./demos/showcases/05-dual-stack.sh
-# … pick a third
+./demos/showcases/01-home-drop.sh
+sudo ./demos/showcases/02-dual-stack.sh
+sudo ./demos/showcases/03-gid-gate.sh
 ```
 
-Prepare a 5-minute talk: what failed, which audit class, how you fixed it.
+5-minute talk: what failed, which audit class, how you fixed it.
 
 ---
 
-## Self-check (ready without hand-holding?)
+## Self-check
 
-- [ ] Explain trust vs SELinux behavior in two sentences  
-- [ ] Trust an `/opt` tree and reload  
-- [ ] Find which rule denied an event  
+- [ ] Trust vs SELinux in two sentences  
+- [ ] Trust an `/opt` tree + `--update`  
+- [ ] Ship a numbered `rules.d` drop-in + reload  
 - [ ] Triage AVC vs FANOTIFY  
 - [ ] Know why not to strace the daemon  

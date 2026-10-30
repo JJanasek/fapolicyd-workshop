@@ -1,72 +1,52 @@
-# fapolicyd — configure it yourself + cool showcases
+# fapolicyd — config cookbook
 
-Self-paced pack after the live **why / what / how** session.
-Goal: you can install, configure, debug, and demo fapolicyd without hand-holding.
+After the live session: **[EXERCISES.md](EXERCISES.md)** for muscle memory; this file for copy-paste reference.
 
-**Learning order:** `00-lab-prep` → **[`EXERCISES.md`](EXERCISES.md)** (type by hand) → showcases last.  
-`demos/*.sh` are spoilers if you get stuck. This file is the **config reference**.
-
-Use a **disposable VM**. Prefer SELinux **enforcing**.
+Order: `00-lab-prep` → exercises → showcases. Disposable VM. SELinux enforcing.  
 **Never** `strace` / `gdb` / `ptrace` the daemon.
 
 ---
 
-## 1. Bootstrap
+## Bootstrap
 
 ```bash
-sudo ./demos/00-lab-prep.sh
-# creates workshop user "fapo" — then:
-su - fapo
+sudo ./demos/00-lab-prep.sh    # fapo + staff_u + audit watch + sudo
+# lands as fapo; or: su - fapo
 
-# or manually:
-sudo dnf install -y fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
-sudo auditctl -w /etc/shadow -p w          # so deny_audit actually logs
-sudo systemctl enable --now fapolicyd
-fapolicyd-cli --check-status
-fapolicyd-cli --list | head
+sudo fapolicyd-cli --check-status
+sudo fapolicyd-cli --list | head
 ```
 
-**Non-root for deny demos:** shipped `allow perm=any uid=0 trust=1 : all`
-lets root+trusted shell run untrusted binaries. Use `fapo` to execute;
-`sudo` for `fapolicyd-cli` / trust / ausearch.
+Non-root for deny demos (`uid=0 trust=1` bypass). `sudo` for CLI / trust / rules.
 
-Soak tip: run permissive first if this is a real machine:
+Soak on a real host: `permissive = 1` in `fapolicyd.conf` → watch → then `0`.
 
-```bash
-# in /etc/fapolicyd/fapolicyd.conf
-permissive = 1
-sudo systemctl restart fapolicyd
-# watch denials for a day/week, then flip to 0
-```
+Reset lab junk: `sudo ./demos/99-cleanup.sh`
 
 ---
 
-## 2. Config cookbook (do these once)
+## Cookbook
 
-### A. Trust an unpackaged `/opt` app (most common task)
+### Trust an `/opt` tree
 
 ```bash
 sudo mkdir -p /opt/myapp/bin
-sudo cp /usr/bin/id /opt/myapp/bin/mytool
-sudo chmod 755 /opt/myapp/bin/mytool
-
-/opt/myapp/bin/mytool                      # expect DENY
+sudo cp /usr/bin/id /opt/myapp/bin/mytool && sudo chmod 755 /opt/myapp/bin/mytool
+/opt/myapp/bin/mytool                      # DENY as fapo
 
 sudo fapolicyd-cli --file add /opt/myapp --trust-file myapp
 sudo fapolicyd-cli --update
 /opt/myapp/bin/mytool                      # ALLOW
 
-# inspect
-fapolicyd-cli --dump-db | grep myapp
+sudo fapolicyd-cli --dump-db | grep myapp
 ls /etc/fapolicyd/trust.d/
 ```
 
-**Rule of thumb:** trust trees > sprinkle allow rules.
+Prefer trust trees over allow-rule sprawl.
 
-### B. Add a custom rule drop-in
+### `rules.d` drop-in
 
 ```bash
-# Place BEFORE catch-all deny (90-*). Example: only fapo_workshop may run ping
 sudo groupadd -f fapo_workshop
 sudo tee /etc/fapolicyd/rules.d/55-workshop-ping.rules <<'EOF'
 allow perm=any gid=fapo_workshop : trust=1 path=/usr/bin/ping
@@ -75,128 +55,78 @@ EOF
 
 sudo fagenrules
 sudo fapolicyd-cli --check-rules --lint
-sudo systemctl reload fapolicyd   # or restart
-fapolicyd-cli --list | grep -n ping
+sudo systemctl reload fapolicyd
+sudo fapolicyd-cli --list | grep -n ping
 ```
 
-Reload is transactional: a bad candidate keeps the old ruleset.
+Number above catch-all deny. Bad reload keeps previous ruleset.
 
-### C. Dial logging for debugging
+### Conf knobs
 
-In `/etc/fapolicyd/fapolicyd.conf`, append `trust` to `syslog_format` so denials
-show whether the object was trusted. Optionally change a deny rule from
-`deny_audit` → `deny_syslog` while debugging, then revert.
+- `permissive = 1|0`
+- `integrity = none|size|sha256` — try `size` before `sha256`
+- Optional: append `trust` to `syslog_format` while debugging
 
-### D. Integrity (optional, deliberate)
+### Health
 
 ```bash
-# /etc/fapolicyd/fapolicyd.conf
-integrity = size          # pragmatic; sha256 is heavier
-sudo systemctl restart fapolicyd
-# then run demos/06-integrity.sh
+sudo fapolicyd-cli --check-status
+sudo fapolicyd-cli --check-metrics
+sudo fapolicyd-cli --check-trustdb
+sudo fapolicyd-cli --check-path
+sudo fapolicyd-cli --check-rules --lint
+sudo fapolicyd-cli --check-ignore_mounts --verbose
 ```
 
-### E. Health checks you should know by heart
-
-```bash
-fapolicyd-cli --check-status
-fapolicyd-cli --check-metrics
-fapolicyd-cli --check-trustdb
-fapolicyd-cli --check-path
-fapolicyd-cli --check-rules --lint
-fapolicyd-cli --check-ignore_mounts --verbose   # before enabling ignore_mounts
-```
-
-### F. Safe debug X-ray
+### Debug X-ray
 
 ```bash
 sudo systemctl stop fapolicyd
 sudo fapolicyd --permissive --debug-deny
-# other terminal: reproduce the deny
-# read: rule:N dec=deny ...
-fapolicyd-cli --list | nl -ba | sed -n '1,80p'
-# Ctrl-C, then:
-sudo systemctl start fapolicyd
+# other terminal: reproduce → rule:N … file=…
+sudo fapolicyd-cli --list | nl -ba | sed -n '1,80p'
+# Ctrl-C → sudo systemctl start fapolicyd
 ```
 
 ---
 
-## 3. Showcases (after exercises)
+## Showcases (after exercises)
 
-Run as root is OK for setup; scripts exec deny-tests as user `fapo` via `demos/lib.sh`.
-
-| Showcase | Script |
-|----------|--------|
-| Clone of ls | `demos/showcases/01-clone-attack.sh` |
-| ld.so | `demos/showcases/02-ldso-smuggle.sh` |
-| Home drop | `demos/showcases/03-home-drop.sh` |
-| Integrity | `demos/showcases/04-integrity-bite.sh` |
-| Dual stack | `demos/showcases/05-dual-stack.sh` |
-| GID gate | `demos/showcases/06-gid-gate.sh` |
-| Debug X-ray | `demos/showcases/07-xray.md` |
-| trs-viewer | `demos/showcases/08-trs-viewer-app.sh` (+ `.md`) |
-
-Present three: e.g. clone, dual-stack (or FANOTIFY-only if unconfined), trs-viewer on your host.
+| Demo | Script |
+|------|--------|
+| Home drop | `demos/showcases/01-home-drop.sh` |
+| Dual stack | `demos/showcases/02-dual-stack.sh` |
+| GID gate | `demos/showcases/03-gid-gate.sh` |
 
 ---
 
-## 4. Structured drills (optional full path)
-
-| # | Script | Focus |
-|---|--------|-------|
-| 1 | `demos/01-baseline.sh` | inventory |
-| 2 | `demos/02-untrusted-exec.sh` | deny → trust |
-| 3 | `demos/03-ldso-bypass.sh` | loader |
-| 4 | `demos/04-home-python.sh` | interpreters |
-| 5 | `demos/05-debug-permissive.md` | debug loop |
-| 6 | `demos/06-integrity.sh` | integrity=size |
-| 7 | `demos/07-custom-gid-rule.sh` | custom rules |
-| 8 | `demos/08-selinux-duo.sh` | AVC vs FANOTIFY |
-| 9 | `demos/09-ops-metrics.sh` | metrics / ignore_mounts |
-
----
-
-## 5. Cheat sheet
+## Cheat sheet
 
 ```bash
 systemctl stop|start|reload fapolicyd
-fapolicyd --permissive --debug-deny
-fapolicyd-cli --list | --dump-db | --update
-fapolicyd-cli --file add PATH --trust-file NAME
-fapolicyd-cli --check-status|--check-metrics|--check-trustdb|--check-rules|--check-path
-fapolicyd-cli --compact-trustdb | --delete-db
-ausearch -m fanotify --start recent
-ausearch -m avc --start recent
+sudo fapolicyd --permissive --debug-deny
+sudo fapolicyd-cli --list | --dump-db | --update
+sudo fapolicyd-cli --file add PATH --trust-file NAME
+sudo fapolicyd-cli --check-status|--check-metrics|--check-trustdb|--check-rules|--check-path
+sudo ausearch -m FANOTIFY -i --start recent
+sudo ausearch -m AVC --start recent
 journalctl -b -u fapolicyd.service
 ```
 
-### Decision tree
-
 ```
 Denied?
-  ├─ ausearch -m avc      → fix SELinux (label/policy)
-  ├─ ausearch -m fanotify → untrusted or rule order
-  │     ├─ should be known software? → trust DB (+ --update)
-  │     └─ who/how exception?       → rules.d drop-in
-  └─ neither, still EACCES → dontaudit? permissive debug-deny
+  ├─ ausearch -m AVC      → SELinux (label/policy)
+  ├─ ausearch -m FANOTIFY → trust / rule order
+  │     (compact events often lack path → --debug-deny)
+  │     ├─ known software? → trust DB + --update
+  │     └─ who/how?        → rules.d drop-in
+  └─ neither → dontaudit? / debug-deny
 ```
 
----
+## Instincts
 
-## 6. Power-user instincts
-
-1. Prefer **trust DB** over allow-rule sprawl.
-2. FANOTIFY ≠ AVC — check both.
-3. First-match: **order is policy**.
-4. Root can disable this (by design).
-5. `ignore_mounts` / `integrity=sha256` are tradeoffs, not free upgrades.
-6. Ship numbered `rules.d` snippets from automation; never hand-edit `compiled.rules`.
-
----
-
-## 7. Stretch
-
-- Permissive soak → enforce on a real workload.
-- Wire `--check-status` / `--check-metrics` into monitoring.
-- Skim [fapolicyd-tests](https://github.com/linux-application-whitelisting/fapolicyd-tests) `Sanity/`.
-- Build a 5-minute internal demo from three showcases.
+1. Trust DB before allow-rule sprawl.  
+2. FANOTIFY ≠ AVC — check both.  
+3. First-match: order is policy.  
+4. Root can disable this (by design).  
+5. Never hand-edit `compiled.rules`.  

@@ -22,11 +22,11 @@ need_root() {
 need_root
 
 echo "==> Installing packages"
-# rpm-plugin-fapolicyd name varies slightly by distro/version
 dnf -y install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd \
-  || dnf -y install fapolicyd fapolicyd-selinux
+  policycoreutils-python-utils \
+  || dnf -y install fapolicyd fapolicyd-selinux policycoreutils-python-utils
 
-# Ensure at least one audit rule so deny_audit emits fanotify events
+# ≥1 audit rule so deny_audit emits FANOTIFY events
 if ! auditctl -l 2>/dev/null | grep -q .; then
   echo "==> Adding minimal audit watch (shadow writes)"
   auditctl -w /etc/shadow -p w
@@ -42,18 +42,31 @@ if ! id "${WORKSHOP_USER}" &>/dev/null; then
 else
   echo "==> User ${WORKSHOP_USER} already exists"
 fi
-# From root: su - fapo works with no password. Give fapo sudo for CLI/trust.
 passwd -d "${WORKSHOP_USER}" 2>/dev/null || true
 if getent group wheel >/dev/null; then
   usermod -aG wheel "${WORKSHOP_USER}" || true
 fi
-# passwordless sudo for lab convenience (disposable VM)
+if getent group fapolicyd >/dev/null; then
+  usermod -aG fapolicyd "${WORKSHOP_USER}" || true
+fi
+
+# Confine fapo so Exercise 5 / dual-stack can produce AVC (not unconfined_t)
+if command -v semanage >/dev/null && [[ -d /etc/selinux ]]; then
+  echo "==> Mapping ${WORKSHOP_USER} → staff_u (for AVC labs)"
+  if ! semanage login -l 2>/dev/null | awk '{print $1}' | grep -qx "${WORKSHOP_USER}"; then
+    semanage login -a -s staff_u "${WORKSHOP_USER}" || true
+  else
+    semanage login -m -s staff_u "${WORKSHOP_USER}" || true
+  fi
+fi
+
 mkdir -p /etc/sudoers.d
 cat >"/etc/sudoers.d/99-${WORKSHOP_USER}-workshop" <<EOF
 ${WORKSHOP_USER} ALL=(ALL) NOPASSWD: ALL
 EOF
 chmod 440 "/etc/sudoers.d/99-${WORKSHOP_USER}-workshop"
 id "${WORKSHOP_USER}"
+id -Z "${WORKSHOP_USER}" 2>/dev/null || true
 
 chmod 755 /opt/fapo-workshop
 chown root:root /opt/fapo-workshop
@@ -72,7 +85,9 @@ fapolicyd-cli --check-status || true
 echo
 echo "================================================================"
 echo "Prep done. Switching to ${WORKSHOP_USER} for deny labs."
+echo "New login needed for staff_u — this su - does that."
 echo "Use sudo for fapolicyd-cli / systemctl. exit → back to root."
+echo "Reset artifacts later: sudo ./demos/99-cleanup.sh"
 echo "================================================================"
 
 if [[ "${SKIP_USER_SWITCH}" == "1" ]]; then
@@ -85,5 +100,4 @@ if [[ ! -t 0 || ! -t 1 ]]; then
   exit 0
 fi
 
-# Replace this process with a login shell as workshop user.
 exec su - "${WORKSHOP_USER}"

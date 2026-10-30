@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SHOWCASE: dropped ELF/script under $HOME cannot run.
-# Prefer: su - fapo && ./demos/showcases/03-home-drop.sh
+# Prefer: su - fapo && ./demos/showcases/01-home-drop.sh
 # If run as root, re-exec under fapo (HOME must be that user's).
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
@@ -41,4 +41,4 @@ set -e
 
 echo
 echo "pip/curl into \$HOME hits the same class of deny."
-echo "ausearch: sudo ausearch --start recent -m fanotify -f ${DROP}"
+echo "ausearch: sudo ausearch --start recent -m FANOTIFY -i   # compact events often lack path"
