@@ -5,6 +5,9 @@ shipped with fapolicyd 2.0.1 (`known-libs` set). Rule numbers differ between
 builds, so answers name the rule file, not the number. Find the number with
 `sudo fapolicyd-cli --list`.
 
+Exercises 3 and 5 were confirmed on a Fedora 44 lab VM; the rest is derived
+from the shipped rules.
+
 Rough time: Ex1 5 min · Ex2 10 · Ex3 5 · Ex4 10 (optional) · Ex5 15 · Ex6 20.
 
 ---

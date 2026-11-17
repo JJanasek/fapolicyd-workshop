@@ -114,7 +114,7 @@ Same deny as Ex2, deeper: `--debug-deny` prints the full decision line:
 
 ```bash
 # Terminal A
-sudo systemctl stop fapolicyd
+sudo systemctl stop fapolicyd     # can take a while; be patient
 sudo mkdir -p /run/fapolicyd     # 2.0.1: systemd removes it on stop; daemon needs it for its pid file
 sudo fapolicyd --permissive --debug-deny
 
