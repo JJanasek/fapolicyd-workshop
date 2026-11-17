@@ -62,7 +62,7 @@ id -u    # must NOT be 0
 echo $?                           # SELinux/DAC would say "Permission denied" (EACCES)
 
 # Compact FANOTIFY often has no path — prefer:
-sudo ausearch --start recent -m FANOTIFY -i
+sudo ausearch -ts recent -m FANOTIFY -i
 ```
 
 If empty: `sudo auditctl -l` (need ≥1 rule), re-deny, search again.  
@@ -160,8 +160,8 @@ ls -lZ /var/tmp/fapo-workshop/dual
 T=$(date +%T)
 /var/tmp/fapo-workshop/dual; echo exit=$?     # note the error text
 
-sudo ausearch --start $T -m AVC | tail -20
-sudo ausearch --start $T -m FANOTIFY -i | tail -20
+sudo ausearch -ts $T -m AVC | tail -20
+sudo ausearch -ts $T -m FANOTIFY -i | tail -20
 ```
 
 **Answer:** Which record(s) for this one attempt, and which error text

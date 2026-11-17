@@ -30,11 +30,11 @@ set -e
 
 echo
 echo "=== SELinux AVCs (may be empty if runner is unconfined_t) ==="
-ausearch --start "${START}" -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
+ausearch -ts "${START}" -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
 
 echo
 echo "=== fapolicyd FANOTIFY (no -f: compact events often lack path) ==="
-ausearch --start "${START}" -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
+ausearch -ts "${START}" -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
 
 echo
 echo "Permission denied = SELinux/DAC (EACCES); Operation not permitted = fapolicyd (EPERM)."

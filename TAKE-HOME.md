@@ -135,8 +135,8 @@ sudo fapolicyd --permissive --debug-deny
 sudo fapolicyd-cli --list | --dump-db | --update | --reload-rules
 sudo fapolicyd-cli --file add PATH --trust-file NAME
 sudo fapolicyd-cli --check-status|--check-metrics|--check-trustdb|--check-rules|--check-path
-sudo ausearch -m FANOTIFY -i --start recent
-sudo ausearch -m AVC --start recent
+sudo ausearch -m FANOTIFY -i -ts recent
+sudo ausearch -m AVC -ts recent
 journalctl -b -u fapolicyd.service
 ```
 

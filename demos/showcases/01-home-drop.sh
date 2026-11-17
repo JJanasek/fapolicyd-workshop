@@ -41,4 +41,4 @@ set -e
 
 echo
 echo "pip/curl into \$HOME hits the same class of deny."
-echo "ausearch: sudo ausearch --start recent -m FANOTIFY -i   # compact events often lack path"
+echo "ausearch: sudo ausearch -ts recent -m FANOTIFY -i   # compact events often lack path"
