@@ -1,10 +1,11 @@
 % fapolicyd Power Users
 % Goal: after this talk you can install, configure, debug, triage.
-% Sparse slides. Practice drills: EXERCISES.md
+% Checked against fapolicyd 2.0.1 (Fedora 44) / 2.0.2 (rawhide).
+% Practice drills: EXERCISES.md, answers: ANSWERS.md
 \documentclass[aspectratio=169,11pt]{beamer}
 
 \IfFileExists{beamerthememetropolis.sty}{%
-  \usetheme{metropolis}%
+  \usetheme[progressbar=frametitle,numbering=fraction]{metropolis}%
 }{%
   \usetheme{default}%
   \setbeamertemplate{navigation symbols}{}%
@@ -12,12 +13,25 @@
 
 \usepackage[T1]{fontenc}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{hyperref}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning}
 
+% Colours and small helpers -------------------------------------------
+\definecolor{allowc}{RGB}{0,120,60}
+\definecolor{denyc}{RGB}{190,30,30}
+\definecolor{rootc}{RGB}{160,90,0}
+\definecolor{fapoc}{RGB}{0,90,160}
+\newcommand{\ok}[1]{\textcolor{allowc}{#1}}
+\newcommand{\no}[1]{\textcolor{denyc}{#1}}
+% Who runs the command: root# (admin, via sudo) or fapo$ (confined user)
+\newcommand{\rootp}{\textcolor{rootc}{root\#}}
+\newcommand{\fapop}{\textcolor{fapoc}{fapo\$}}
+\newcommand{\dd}{-{}-}
+
 \title{fapolicyd for Power Users}
-\subtitle{Leave able to configure and debug it}
+\subtitle{Leave able to configure, debug and maintain it}
 \author{SELinux Development Team Workshop}
 \date{\today}
 
@@ -35,24 +49,12 @@
     \item Trust unpackaged software
     \item Add a \texttt{rules.d} drop-in safely
     \item Debug a denial and triage AVC vs FANOTIFY
+    \item Find your way around as a maintainer
   \end{itemize}
-\end{frame}
-
-\begin{frame}{How we get there}
-  \begin{itemize}
-    \item \textbf{Why} --- trust layer beside MAC (short)
-    \item \textbf{What} --- trust, rules, conf, filter
-    \item \textbf{Configure} --- exact workflows
-    \item \textbf{Live} --- one end-to-end example
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{At home = practice, not first contact}
-  \begin{itemize}
-    \item Config knowledge is \emph{in this deck}
-    \item \texttt{EXERCISES.md} drills muscle memory
-    \item Showcases = present later, not learn first
-  \end{itemize}
+  \vspace{0.6em}
+  {\small Config knowledge is \emph{in this deck}; \texttt{EXERCISES.md}
+  is practice, not first contact.\\
+  Prompts: \rootp{} = admin (sudo), \fapop{} = confined workshop user.}
 \end{frame}
 
 \begin{frame}{Agenda}
@@ -66,17 +68,74 @@
   \begin{itemize}
     \item SELinux: \emph{behavior} (labels / domains)
     \item fapolicyd: \emph{known artifact?} (trust / provenance)
-    \item Same action can hit AVC, FANOTIFY, or both
+    \item Layered: SELinux is asked first; first denier wins
+    \item Whitelist by trust --- not ``it has \texttt{bin\_t}''
   \end{itemize}
 \end{frame}
 
-\begin{frame}{What you gain / limits}
+\begin{frame}{You already know most of this}
+  \centering\small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{SELinux} & \textbf{fapolicyd} \\
+    \midrule
+    AVC record & FANOTIFY record \\
+    \texttt{setenforce 0} / permissive domain & \texttt{permissive = 1} \\
+    \texttt{dontaudit} & \texttt{deny} instead of \texttt{deny\_audit} \\
+    \texttt{file\_contexts} + \texttt{restorecon} & trust DB + \texttt{fapolicyd-cli \dd update} \\
+    policy module + \texttt{semodule} & \texttt{rules.d} drop-in + \texttt{fagenrules \dd load} \\
+    allow rules: order-independent & \textbf{first match wins} --- order is policy \\
+    \texttt{audit2allow} & no equivalent: add trust, do not generate rules \\
+    \emph{Permission denied} (EACCES) & \emph{Operation not permitted} (EPERM) \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Where it sits in an exec}
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    box/.style={draw,rounded corners,align=center,minimum height=0.95cm,minimum width=1.75cm},
+    side/.style={draw,dashed,rounded corners,align=center,minimum height=0.8cm,minimum width=1.75cm},
+    arr/.style={-{Latex},thick}
+  ]
+    \node[box] (app) {execve()\\open()};
+    \node[box,right=0.45cm of app] (dac) {DAC};
+    \node[box,right=0.45cm of dac] (se) {SELinux};
+    \node[box,right=0.45cm of se] (fan) {fanotify\\perm event};
+    \node[box,right=0.45cm of fan,fill=black!8] (dap) {fapolicyd};
+    \node[box,right=0.45cm of dap] (dec) {\ok{allow}\\\no{deny}};
+    \node[side,above=0.7cm of dap] (trust) {trust DB\\(LMDB)};
+    \node[side,below=0.7cm of dap] (rules) {compiled\\.rules};
+    \node[side,left=0.45cm of trust] (src) {rpm plugin\\\texttt{trust.d/}};
+    \node[side,left=0.45cm of rules] (rd) {\texttt{rules.d/}\\fagenrules};
+    \node[above=0.2cm of se,text=denyc,align=center] {AVC\\EACCES};
+    \node[above=0.2cm of dec,text=denyc,align=center] {FANOTIFY\\EPERM};
+    \draw[arr] (app) -- (dac);
+    \draw[arr] (dac) -- (se);
+    \draw[arr] (se) -- (fan);
+    \draw[arr] (fan) -- (dap);
+    \draw[arr] (dap) -- (dec);
+    \draw[arr] (trust) -- (dap);
+    \draw[arr] (rules) -- (dap);
+    \draw[arr] (src) -- (trust);
+    \draw[arr] (rd) -- (rules);
+  \end{tikzpicture}
+
+  \vspace{0.4em}
+  {\small An earlier layer that denies ends the attempt --- later layers never see it}
+\end{frame}
+
+\begin{frame}{What it does \emph{not} stop}
   \begin{itemize}
-    \item Block unpackaged home / tmp / \texttt{/opt} code
-    \item Stop \texttt{ld.so} smuggling (\texttt{pattern=ld\_so})
-    \item Whitelist by trust --- not ``it has \texttt{bin\_t}''
-    \item Limits: root can disable it; not a MAC substitute
+    \item Shell scripts: allowed by default (\texttt{72-shell})
+    \item \texttt{pattern=ld\_preload} and \texttt{pattern=static}: shipped disabled
+    \item Filesystems outside \texttt{watch\_fs}, or listed in \texttt{ignore\_mounts}
+    \item Trusted interpreters acting on data they are fed
+    \item Root: can stop or reconfigure it (by design)
   \end{itemize}
+  \vspace{0.4em}
+  {\small Not a MAC substitute --- it answers ``is this file known?'', nothing more}
 \end{frame}
 
 %=====================================================================
@@ -84,327 +143,360 @@
 
 \begin{frame}{Four places that matter}
   \begin{enumerate}
-    \item Trust DB --- known files
+    \item Trust DB --- known files (\texttt{rpmdb} + \texttt{trust.d/})
     \item \texttt{rules.d/} --- policy
     \item \texttt{fapolicyd.conf} --- mode / integrity / tuning
-    \item \texttt{fapolicyd-filter.conf} --- what RPM trust includes\\
+    \item \texttt{fapolicyd-filter.conf} --- what trust import includes\\
           {\small (man\,5 fapolicyd-filter.conf)}
   \end{enumerate}
 \end{frame}
 
-\begin{frame}{Architecture (for intuition)}
-  \centering
-  \begin{tikzpicture}[
-    box/.style={draw,rounded corners,align=center,minimum height=0.95cm,minimum width=2.1cm},
-    arr/.style={-{Latex},thick}
-  ]
-    \node[box] (app) {open/exec};
-    \node[box,right=1.1cm of app] (fan) {fanotify};
-    \node[box,right=1.1cm of fan] (dap) {fapolicyd};
-    \node[box,above=0.65cm of dap] (trust) {trust};
-    \node[box,below=0.65cm of dap] (rules) {rules};
-    \node[box,right=1.1cm of dap] (dec) {allow/deny};
-    \draw[arr] (app) -- (fan);
-    \draw[arr] (fan) -- (dap);
-    \draw[arr] (trust) -- (dap);
-    \draw[arr] (rules) -- (dap);
-    \draw[arr] (dap) -- (dec);
-  \end{tikzpicture}
-\end{frame}
-
 \begin{frame}{Hard rule}
   \centering
-  \vspace{1.2em}
+  \vspace{0.8em}
   {\Large Never strace / gdb the daemon}
   \vspace{0.8em}
 
-  SIGSTOP $\Rightarrow$ system-wide deadlock
+  SIGSTOP $\Rightarrow$ every exec waits for a daemon that cannot answer\\[0.8em]
+  {\small 2.0: \texttt{Type=notify} + \texttt{WatchdogSec=10s} lets systemd
+  restart a stalled daemon\\[0.4em]
+  \texttt{fapolicyd-selinux} hardening module:\\
+  \texttt{(deny domain fapolicyd\_t (process (ptrace sigstop)))}}
 \end{frame}
 
-\begin{frame}{Trust --- two backends}
+\begin{frame}[fragile]{Trust --- two backends, one entry format}
   \begin{itemize}
-    \item \texttt{rpmdb} --- from RPM (now inside \texttt{fapolicyd})
-    \item \texttt{filedb} --- you add in \texttt{trust.d/}
+    \item \texttt{rpmdb} --- from RPM, kept current by the rpm plugin
+    \item \texttt{filedb} --- what you add in \texttt{trust.d/}
   \end{itemize}
+  \begin{semiverbatim}
+\rootp fapolicyd-cli \dd{}dump-db | grep myapp
+filedb /opt/myapp/bin/x  SIZE  HASH
+  \end{semiverbatim}
+  Rules only see \ok{\texttt{trust=1}} or \no{\texttt{trust=0}}\\
+  {\small Hash is SHA256 or SHA512 (RPM); rule keyword \texttt{FILE\_HASH}
+  replaces \texttt{SHA256HASH}}
 \end{frame}
 
-\begin{frame}{Filter (RPM trust scope)}
+\begin{frame}{Filter (trust import scope)}
   \begin{itemize}
     \item \texttt{/etc/fapolicyd/fapolicyd-filter.conf}
     \item \texttt{+} include / \texttt{-} exclude paths (indented)
-    \item Applied when RPM trust is imported --- not per access
-    \item \texttt{fapolicyd-cli -{}-test-filter PATH}
-    \item Named here; not a hands-on drill
+    \item Applied when trust is imported --- not per access
+    \item Also: \texttt{\dd file add PATH \dd filter} (file trust)
+    \item \texttt{fapolicyd-cli \dd test-filter PATH}
   \end{itemize}
-\end{frame}
-
-\begin{frame}[fragile]{Trust --- entry}
-  \begin{semiverbatim}
-filedb /opt/app/bin/x  SIZE  SHA256
-  \end{semiverbatim}
-  \vspace{0.6em}
-  Rules see \texttt{trust=1} or \texttt{trust=0}
 \end{frame}
 
 \begin{frame}{Rules --- recipe}
   \centering
-  \vspace{1em}
   {\large\texttt{decision permission subject : object}}
-  \vspace{1em}
-
-  First match wins
-\end{frame}
-
-\begin{frame}[fragile]{Shipped: \texttt{pattern=ld\_so}}
-  \begin{semiverbatim}
-deny_audit perm=any pattern=ld_so : all
-  \end{semiverbatim}
   \vspace{0.6em}
-  Trusted loader does \emph{not} bless an untrusted ELF.\\
-  (\texttt{ld.so ./evil} still denied)
-\end{frame}
 
-\begin{frame}{Rules --- where they live}
+  \textbf{First match wins}
+  \vspace{0.8em}
+
+  \raggedright
   \begin{itemize}
     \item Edit \texttt{/etc/fapolicyd/rules.d/NN-name.rules}
-    \item \texttt{fagenrules} builds \texttt{compiled.rules}
-    \item Never hand-edit compiled output
+    \item \texttt{fagenrules} builds \texttt{compiled.rules} --- never hand-edit it
+    \item Decisions: \ok{\texttt{allow}} / \no{\texttt{deny}}, with
+          \texttt{\_audit}, \texttt{\_syslog} or \texttt{\_log} (both)
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Default policy}
+\begin{frame}{Shipped ruleset (\texttt{known-libs}) --- top half}
+  \footnotesize
+  \begin{tabular}{@{}l>{\raggedright\arraybackslash}p{8.3cm}>{\raggedright\arraybackslash}p{2.3cm}@{}}
+    \toprule
+    File & Rule & Meaning \\
+    \midrule
+    \texttt{10-languages} & \texttt{\%languages=}\ldots & language set \\
+    \texttt{20-dracut} & \ok{\texttt{allow}} \texttt{perm=any uid=0 : dir=/var/tmp/} & root in \texttt{/var/tmp} \\
+     & \ok{\texttt{allow}} \texttt{perm=any uid=0 trust=1 : all} & root + trusted \\
+    \texttt{21-updaters} & \ok{\texttt{allow}} \texttt{perm=open exe=/usr/bin/rpm : all} & updater exempt \\
+    \texttt{30-patterns} & \no{\texttt{deny\_audit}} \texttt{perm=any pattern=ld\_so : all} & no \texttt{ld.so ./prog} \\
+    \texttt{40-bad-elf} & \no{\texttt{deny\_audit}} \texttt{perm=any all : ftype=}\ldots\texttt{x-bad-elf} & malformed ELF \\
+    \texttt{41-shared-obj} & \ok{\texttt{allow}} \texttt{perm=open all : ftype=}\ldots\texttt{sharedlib trust=1} & trusted libs \\
+     & \no{\texttt{deny\_audit}} \texttt{perm=open all : ftype=}\ldots\texttt{sharedlib} & other libs \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Shipped ruleset (\texttt{known-libs}) --- bottom half}
+  \footnotesize
+  \begin{tabular}{@{}l>{\raggedright\arraybackslash}p{8.3cm}>{\raggedright\arraybackslash}p{2.3cm}@{}}
+    \toprule
+    File & Rule & Meaning \\
+    \midrule
+    \texttt{42-trusted-elf} & \ok{\texttt{allow}} \texttt{perm=execute all : trust=1} & run trusted files \\
+    \texttt{70-trusted-lang} & \ok{\texttt{allow}} \texttt{perm=open all : ftype=\%languages trust=1} & trusted scripts \\
+     & \no{\texttt{deny\_audit}} \texttt{perm=any all : ftype=\%languages} & other scripts \\
+    \texttt{72-shell} & \ok{\texttt{allow}} \texttt{perm=any all : ftype=text/x-shellscript} & shell scripts \\
+    \texttt{90-deny-execute} & \no{\texttt{deny\_audit}} \texttt{perm=execute all : all} & execute catch-all \\
+    \texttt{95-allow-open} & \ok{\texttt{allow}} \texttt{perm=open all : all} & open the rest \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.6em}
+  Your drop-in must sort \emph{before} the rule that would otherwise match
+\end{frame}
+
+\begin{frame}{Read the ruleset: who wins?}
+  \small
+  \begin{tabular}{@{}p{6.8cm}ll@{}}
+    \toprule
+    Attempt (as \fapop) & Result & Decided by \\
+    \midrule
+    Run \texttt{/usr/bin/ls} & \ok{allow} & \texttt{42-trusted-elf} \\
+    Run a copy of \texttt{ls} in \texttt{/opt} & \no{deny} & \texttt{90-deny-execute} \\
+    \texttt{ld.so /usr/bin/ls} & \no{deny} & \texttt{30-patterns} \\
+    Run \texttt{\textasciitilde/script.sh} & \ok{allow} & \texttt{72-shell} \\
+    \texttt{python3 \textasciitilde/helper.py} & \no{deny} & \texttt{70-trusted-lang} \\
+    \texttt{cat \textasciitilde/notes.txt} & \ok{allow} & \texttt{95-allow-open} \\
+    \midrule
+    Copy of \texttt{ls} in \texttt{/opt}, as \rootp{} from bash & \ok{allow} & \texttt{20-dracut} (\texttt{uid=0 trust=1}) \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.6em}
+  That last row is why every deny lab runs as \fapop, not root
+\end{frame}
+
+\begin{frame}{Rules --- new in 2.0}
   \begin{itemize}
-    \item Shipped set: \texttt{known-libs}
-    \item Trusted ELF mostly allowed (\texttt{42-trusted-elf})
-    \item Untrusted ELF / libs $\rightarrow$ deny
-    \item Shell scripts often allowed (\texttt{ftype=text/x-shellscript})
+    \item Globs, explicit prefix: \texttt{path=glob:/opt/vendor/*/bin/tool}\\
+          {\small (\texttt{exe} and \texttt{path} only; \texttt{*} does not cross \texttt{/})}
+    \item Spaces: \texttt{dir="/tmp/first last/"}
+    \item Packages extend languages: \texttt{\%languages+=mime/type}
+    \item \texttt{dir=untrusted} deprecated --- use object \texttt{trust=}
+    \item \texttt{fapolicyd-cli \dd ftype FILE} shows the MIME type rules see
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Integrity in conf}
+\begin{frame}{Conf --- \texttt{/etc/fapolicyd/fapolicyd.conf}}
   \begin{itemize}
-    \item \texttt{none} --- default
-    \item \texttt{size} --- good first step
-    \item \texttt{ima} --- IMA appraisal
-    \item \texttt{sha256} --- costly; plan capacity
+    \item \texttt{permissive = 1} while soaking; fix trust / rules; then \texttt{0} + restart
+    \item \texttt{integrity = none | size | ima | sha256}\\
+          {\small \texttt{none} is default; try \texttt{size} before \texttt{sha256} (costly)}
+    \item \texttt{decision\_threads} --- parallel decisions (2.0)
+    \item \texttt{ignore\_mounts} --- check with \texttt{\dd check-ignore\_mounts}
+    \item \texttt{db\_max\_size = auto} --- default now
+    \item \texttt{rpm\_sha256\_only}, \texttt{reset\_strategy}, \texttt{timing\_collection}
   \end{itemize}
 \end{frame}
 
 %=====================================================================
 \section{Configure}
 
-\begin{frame}{Workflow A --- install}
-  \begin{enumerate}
-    \item \texttt{dnf install fapolicyd}\\
-          {\small (pulls what you need; \texttt{rpm-plugin-fapolicyd}
-          obsolete on rawhide)}
-    \item Ensure $\ge$ 1 audit rule exists
-    \item \texttt{systemctl enable -{}-now fapolicyd}
-  \end{enumerate}
-\end{frame}
-
-\begin{frame}{Workflow A --- verify}
+\begin{frame}[fragile]{Workflow A --- install and verify}
+  \begin{semiverbatim}
+\rootp dnf install fapolicyd
+\rootp auditctl -a always,exit -F path=/etc/shadow -F perm=wa
+\rootp systemctl enable \dd{}now fapolicyd
+\rootp fapolicyd-cli \dd{}check-status
+\rootp fapolicyd-cli \dd{}list | head
+  \end{semiverbatim}
   \begin{itemize}
-    \item \texttt{fapolicyd-cli -{}-check-status}
-    \item \texttt{fapolicyd-cli -{}-list | head}
-    \item Expect: Permissive false, trust entries $>$ 0
+    \item \texttt{dnf} pulls the rpm plugin and \texttt{fapolicyd-selinux}\\
+          {\small (F44 / 2.0.1: separate \texttt{rpm-plugin-fapolicyd};
+          rawhide 2.0.2 ships it inside \texttt{fapolicyd})}
+    \item Without $\ge$ 1 audit rule, \texttt{deny\_audit} is quiet --- any rule will do
+    \item Expect: \texttt{Permissive: false}, trust entries $>$ 0
   \end{itemize}
 \end{frame}
 
-\begin{frame}[fragile]{Audit rule (why)}
-  \begin{itemize}
-    \item Without any audit rule, \texttt{deny\_audit} is quiet
-    \item Any loaded rule is enough; e.g.:
-  \end{itemize}
+\begin{frame}[fragile]{Workflow B --- trust an /opt app}
+  The default remediation. Prefer it over allow rules.
   \begin{semiverbatim}
-auditctl -a always,exit -F path=/etc/shadow -F perm=wa
+\fapop /opt/myapp/bin/mytool            # \no{Operation not permitted}
+\rootp fapolicyd-cli \dd{}file add /opt/myapp \dd{}trust-file myapp
+\rootp fapolicyd-cli \dd{}update
+\fapop /opt/myapp/bin/mytool            # \ok{runs}
   \end{semiverbatim}
-\end{frame}
-
-\begin{frame}{Workflow B --- trust an /opt app}
-  This is the default remediation.
-\end{frame}
-
-\begin{frame}[fragile]{Trust /opt --- commands}
-  \begin{semiverbatim}
-fapolicyd-cli -{}-file add /opt/myapp \\
-  -{}-trust-file myapp
-fapolicyd-cli -{}-update
-  \end{semiverbatim}
-\end{frame}
-
-\begin{frame}{Trust /opt --- remember}
   \begin{itemize}
-    \item \texttt{-{}-file add} writes \texttt{trust.d/}
-    \item \texttt{-{}-update} reloads the daemon DB
-    \item Prefer this over allow rules
+    \item \texttt{\dd file add} writes \texttt{/etc/fapolicyd/trust.d/myapp}
+    \item \texttt{\dd update} reloads the daemon's DB
+    \item Inspect: \texttt{fapolicyd-cli \dd dump-db | grep myapp}
   \end{itemize}
 \end{frame}
 
-\begin{frame}[fragile]{Inspect trust}
-  \begin{semiverbatim}
-fapolicyd-cli -{}-dump-db | grep myapp
-ls /etc/fapolicyd/trust.d/
-  \end{semiverbatim}
-\end{frame}
-
-\begin{frame}{Workflow C --- custom rule}
-  Use only when you need \emph{who} / \emph{how},\\
-  not just ``is it known?''
-\end{frame}
-
-\begin{frame}[fragile]{Custom rule --- drop-in}
+\begin{frame}[fragile]{Workflow C --- custom rule}
+  Only when you need \emph{who} / \emph{how}, not just ``is it known?''
   \begin{semiverbatim}
 # /etc/fapolicyd/rules.d/39-ping.rules  (one line per rule)
 # BEFORE 42-trusted-elf (allow execute trust=1)
-allow perm=any gid=fapo_workshop : trust=1 path=/usr/bin/ping
-deny_audit perm=execute all : trust=1 path=/usr/bin/ping
+\ok{allow} perm=any gid=fapo_workshop : trust=1 path=/usr/bin/ping
+\no{deny_audit} perm=execute all : trust=1 path=/usr/bin/ping
   \end{semiverbatim}
-\end{frame}
-
-\begin{frame}[fragile]{Custom rule --- apply}
   \begin{semiverbatim}
-fagenrules -{}-load
-fapolicyd-cli -{}-check-rules -{}-lint
-fapolicyd-cli -{}-list | grep ping
+\rootp fagenrules \dd{}load
+\rootp fapolicyd-cli \dd{}check-rules \dd{}lint
+\rootp fapolicyd-cli \dd{}list | grep -n ping
   \end{semiverbatim}
-  \vspace{0.4em}
-  {\small (\texttt{systemctl reload} does \emph{not} load rules)}
 \end{frame}
 
 \begin{frame}{Custom rule --- safety}
   \begin{itemize}
-    \item Number \emph{before} \texttt{allow \ldots trust=1} (42), not just deny-all
-    \item Confirm: \texttt{fapolicyd-cli -{}-list | nl}
-    \item Bad reload keeps previous ruleset
+    \item Number \emph{before} the rule that would match first\\
+          {\small (\texttt{55-} is too late: \texttt{42-trusted-elf} already allowed ping)}
+    \item \texttt{systemctl reload} does \emph{not} load rules --- no \texttt{ExecReload}
+    \item A bad reload keeps the previous ruleset (transactional)
+    \item Test as \fapop{} --- root matches \texttt{uid=0 trust=1} first
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Workflow D --- conf knobs}
-  File: \texttt{/etc/fapolicyd/fapolicyd.conf}
-\end{frame}
-
-\begin{frame}{Conf --- soak then enforce}
-  \begin{itemize}
-    \item \texttt{permissive = 1} while learning / soaking
-    \item Watch denials, fix trust/rules
-    \item Then \texttt{permissive = 0} + restart
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{Conf --- integrity}
-  \begin{itemize}
-    \item \texttt{none | size | ima | sha256}
-    \item Try \texttt{size} before \texttt{sha256}
-  \end{itemize}
-\end{frame}
+%=====================================================================
+\section{Triage}
 
 \begin{frame}{Decision tree --- denied?}
   \begin{enumerate}
-    \item \texttt{ausearch -m AVC} $\rightarrow$ SELinux
-    \item \texttt{ausearch -m FANOTIFY -i} $\rightarrow$ fapolicyd\\
-          {\small (compact events often lack path --- use \texttt{-{}-debug-deny})}
-    \item Neither / unclear $\rightarrow$ debug-deny
+    \item Error text: \emph{Operation not permitted} (EPERM) $\rightarrow$ fapolicyd;\\
+          \emph{Permission denied} (EACCES) $\rightarrow$ SELinux / DAC
+    \item \texttt{ausearch -m AVC} $\rightarrow$ SELinux (label / policy)
+    \item \texttt{ausearch -m FANOTIFY -i} $\rightarrow$ fapolicyd
+          \begin{itemize}
+            \item known software? $\rightarrow$ trust + \texttt{\dd update}
+            \item who / how exception? $\rightarrow$ \texttt{rules.d} drop-in
+          \end{itemize}
+    \item Unclear $\rightarrow$ \texttt{deny\_log} or \texttt{\dd debug-deny}
   \end{enumerate}
+\end{frame}
+
+\begin{frame}[fragile]{Reading the records}
+  Audit record (kernel $\ge$ 6.3) --- field layout:
+  \begin{semiverbatim}
+type=FANOTIFY resp=2 fan_type=1 fan_info=B subj_trust=2 obj_trust=0
+  \end{semiverbatim}
+  {\small \texttt{resp=2} deny \quad \texttt{fan\_info} rule number, \textbf{hex}
+  (B = rule 11) \quad trust: 0 no, 1 yes, 2 unknown}
+
+  \vspace{0.6em}
+  Daemon line (debug mode, or syslog with \texttt{deny\_log}):
+  \begin{semiverbatim}
+rule=11 dec=deny_audit perm=execute auid=1001 pid=4242
+  exe=/usr/bin/bash : path=/opt/x/my-ls
+  ftype=application/x-executable trust=0
+  \end{semiverbatim}
+  {\small Same rule numbering as \texttt{fapolicyd-cli \dd list}. Values here are illustrative.}
 \end{frame}
 
 \begin{frame}{Dual stack}
   \begin{itemize}
-    \item One binary can hit \textbf{both} AVC and FANOTIFY
-    \item Wrong label $\rightarrow$ AVC; untrusted $\rightarrow$ FANOTIFY
-    \item Fix each layer separately (label/policy vs trust/rules)
+    \item One binary can be wrong for \textbf{both} layers
+    \item Wrong label $\rightarrow$ AVC first; untrusted $\rightarrow$ FANOTIFY next
+    \item One attempt usually logs only the first denier
+    \item Fix each layer separately (label / policy vs trust / rules)
+    \item SELinux allow $\not\Rightarrow$ fapolicyd allow, and vice versa
   \end{itemize}
 \end{frame}
 
-\begin{frame}{If FANOTIFY deny}
-  \begin{itemize}
-    \item Should be known software? $\rightarrow$ trust + \texttt{-{}-update}
-    \item Who/how exception? $\rightarrow$ \texttt{rules.d} drop-in
-  \end{itemize}
-\end{frame}
-
-\begin{frame}{Debug loop (1/2)}
+\begin{frame}[fragile]{Debug --- two ways to get the full line}
+  \textbf{Without stopping the daemon} (prefer this):
   \begin{enumerate}
-    \item \texttt{systemctl stop fapolicyd}
-    \item \texttt{fapolicyd -{}-permissive -{}-debug-deny}
-    \item Reproduce $\rightarrow$ \texttt{rule:N} \ldots \texttt{file=}
+    \item Change the rule's \texttt{deny\_audit} to \texttt{deny\_log}, \texttt{fagenrules \dd load}
+    \item Reproduce, then \texttt{journalctl -b -u fapolicyd}
+    \item Map \texttt{rule=N} with \texttt{fapolicyd-cli \dd list}; fix trust or rule order
   \end{enumerate}
-\end{frame}
-
-\begin{frame}{Debug loop (2/2)}
-  \begin{enumerate}
-    \setcounter{enumi}{3}
-    \item \texttt{fapolicyd-cli -{}-list} $\rightarrow$ map N
-    \item Fix trust or move allow above deny
-    \item Restart service when done
-  \end{enumerate}
+  \textbf{Foreground debug} (lab only --- nothing is enforced meanwhile):
+  \begin{semiverbatim}
+\rootp systemctl stop fapolicyd
+\rootp mkdir -p /run/fapolicyd      # 2.0.1: removed on stop
+\rootp fapolicyd \dd{}permissive \dd{}debug-deny
+  \end{semiverbatim}
 \end{frame}
 
 \begin{frame}{CLI cheat}
   \begin{itemize}
-    \item Inspect: \texttt{-{}-check-status}, \texttt{-{}-list}, \texttt{-{}-dump-db}
-    \item Change: \texttt{-{}-file add/delete}, \texttt{-{}-update}
-    \item Check: \texttt{-{}-check-rules -{}-lint}
+    \item Inspect: \texttt{\dd check-status}, \texttt{\dd list},
+          \texttt{\dd dump-db}, \texttt{\dd ftype FILE}
+    \item Change: \texttt{\dd file add|delete|update}, \texttt{\dd update},
+          \texttt{\dd reload-rules}
+    \item Check: \texttt{\dd check-rules \dd lint}, \texttt{\dd check-trustdb},
+          \texttt{\dd check-path}
+    \item Observe: \texttt{\dd check-metrics} (per-rule hit counts),\\
+          \texttt{\dd timing-start} / \texttt{\dd timing-stop}
   \end{itemize}
 \end{frame}
 
 \begin{frame}{Anti-patterns}
   \begin{itemize}
-    \item Allow-list sprawl instead of trust
-    \item Edit \texttt{compiled.rules}
-    \item Assume SELinux allow $\Rightarrow$ fapolicyd allow
+    \item Allow-rule sprawl instead of trust
+    \item Editing \texttt{compiled.rules}
+    \item Testing denials as root
+    \item Assuming SELinux allow $\Rightarrow$ fapolicyd allow
+    \item Stopping the daemon on a real host to ``see what happens''
+  \end{itemize}
+\end{frame}
+
+%=====================================================================
+\section{For maintainers}
+
+\begin{frame}{How trust stays current}
+  \begin{itemize}
+    \item \texttt{dnf} / \texttt{rpm} transaction $\rightarrow$ rpm plugin
+          $\rightarrow$ \texttt{/run/fapolicyd/fapolicyd.fifo} $\rightarrow$ daemon
+    \item Daemon rebuilds the trust DB (LMDB in \texttt{/var/lib/fapolicyd})
+    \item \texttt{21-updaters.rules} exists so the updater itself is never blocked\\
+          {\small (the updater waiting on a daemon that waits on the updater = deadlock)}
+    \item A failed trust or rules reload keeps the active generation
+    \item Plugin ownership moved: rpm's \texttt{rpm-plugin-fapolicyd} (F44)
+          $\rightarrow$ \texttt{fapolicyd} itself (2.0.2)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{\texttt{fapolicyd-selinux} --- our own module}
+  \begin{itemize}
+    \item \texttt{fapolicyd\_t}: init daemon domain, entry \texttt{fapolicyd\_exec\_t}
+    \item Types: \texttt{fapolicyd\_config\_t}, \texttt{\_var\_lib\_t},
+          \texttt{\_var\_run\_t}, \texttt{\_log\_t}, \texttt{\_unit\_file\_t}
+    \item Broad by necessity: reads and mmaps all files, reads all domains' state,\\
+          \texttt{watch\_with\_perm} on every file type
+    \item Capabilities include \texttt{sys\_admin}, \texttt{sys\_ptrace}, \texttt{dac\_override}
+    \item Separate \texttt{fapolicyd-hardening.cil}: nobody may ptrace or SIGSTOP the daemon
+  \end{itemize}
+  \vspace{0.3em}
+  {\small Upstream: linux-application-whitelisting/fapolicyd-selinux}
+\end{frame}
+
+\begin{frame}{Finding your way in the source}
+  \begin{itemize}
+    \item \texttt{src/daemon} --- fanotify loop, reload, reports
+    \item \texttt{src/library} --- rules, policy decisions, trust backends, filter
+    \item \texttt{src/cli} --- \texttt{fapolicyd-cli}
+    \item \texttt{src/tests} --- unit tests per component, plus \texttt{stress}
+          and \texttt{perf-test}
+    \item \texttt{rules.d/} --- the shipped rule files you just read
+    \item \texttt{ChangeLog} --- 1.5, 1.6, 2.0 changed a lot; read it once
   \end{itemize}
 \end{frame}
 
 %=====================================================================
 \section{Live}
 
-\begin{frame}{We configure together}
-  Install $\rightarrow$ deny clone of \texttt{ls} $\rightarrow$ trust it $\rightarrow$ allow\\[0.6em]
-  {\large Run the binary as \texttt{fapo}, not root}
-\end{frame}
-
-\begin{frame}{Setup}
+\begin{frame}{Setup --- and why not root}
   \begin{itemize}
-    \item \texttt{sudo demos/00-lab-prep.sh}\\
+    \item \texttt{sudo demos/00-lab-prep.sh}
           $\rightarrow$ \texttt{fapo} in \texttt{staff\_t} (via \texttt{runcon})
     \item Plain \texttt{su -} stays \texttt{unconfined\_t} --- no AVC lab
     \item \texttt{id -Z} should show \texttt{staff\_t}
+    \item Root + trusted shell matches \texttt{uid=0 trust=1} and is \ok{allowed}
+          --- so deny as \fapop
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Why not root?}
-  \begin{itemize}
-    \item Shipped: \texttt{allow perm=any uid=0 trust=1 : all}
-    \item Root + trusted shell $\Rightarrow$ untrusted \texttt{/opt} often \textbf{allowed}
-    \item Deny labs need workshop user \texttt{fapo}
-  \end{itemize}
-\end{frame}
-
-\begin{frame}[fragile]{Deny (as fapo)}
+\begin{frame}[fragile]{Deny, then fix}
   \begin{semiverbatim}
-id -u    # must NOT be 0
-sudo cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
-sudo chmod 755 /opt/fapo-workshop/my-ls
-/opt/fapo-workshop/my-ls          # DENY
-  \end{semiverbatim}
-\end{frame}
+\fapop id -u                              # must NOT be 0
+\rootp cp -a /usr/bin/ls /opt/fapo-workshop/my-ls
+\fapop /opt/fapo-workshop/my-ls           # \no{Operation not permitted}
 
-\begin{frame}[fragile]{Configure fix (as fapo)}
-  \begin{semiverbatim}
-sudo fapolicyd-cli -{}-file add \\
-  /opt/fapo-workshop/my-ls -{}-trust-file workshop
-sudo fapolicyd-cli -{}-update
-/opt/fapo-workshop/my-ls          # ALLOW
+\rootp fapolicyd-cli \dd{}file add \\
+        /opt/fapo-workshop/my-ls \dd{}trust-file workshop
+\rootp fapolicyd-cli \dd{}update
+\fapop /opt/fapo-workshop/my-ls           # \ok{runs}
   \end{semiverbatim}
-\end{frame}
-
-\begin{frame}{You just configured trust}
-  \begin{itemize}
-    \item Diagnosed untrusted execute
-    \item Applied the standard fix
-    \item Verified allow
-  \end{itemize}
+  Diagnosed an untrusted execute, applied the standard fix, verified
 \end{frame}
 
 %=====================================================================
@@ -415,41 +507,48 @@ sudo fapolicyd-cli -{}-update
     \item[$\square$] Install + verify status
     \item[$\square$] Trust an \texttt{/opt} tree
     \item[$\square$] Add / reload a rules drop-in
-    \item[$\square$] Debug with \texttt{rule:N}
+    \item[$\square$] Get the full decision line (\texttt{rule=N})
     \item[$\square$] Triage AVC vs FANOTIFY
+    \item[$\square$] Explain the shipped ruleset top to bottom
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Practice next}
+\begin{frame}{Practice next, then discuss}
   \begin{itemize}
-    \item \texttt{EXERCISES.md} --- predict / do / answer
+    \item \texttt{EXERCISES.md} --- predict / do / check; \texttt{ANSWERS.md} when stuck
     \item \texttt{TAKE-HOME.md} --- cookbook reference
     \item \texttt{demos/showcases/} --- demo to others later
   \end{itemize}
-\end{frame}
-
-\begin{frame}{Discussion}
+  \vspace{0.6em}
+  Discussion:
   \begin{itemize}
-    \item Where on staff machines?
-    \item How do we teach AVC vs FANOTIFY?
+    \item Where do we run it on our own machines?
+    \item What belongs in \texttt{fapolicyd-selinux} vs \texttt{selinux-policy}?
+    \item How do we teach users AVC vs FANOTIFY?
   \end{itemize}
 \end{frame}
 
 \begin{frame}{References}
   \begin{itemize}
-    \item linux-application-whitelisting/fapolicyd
-    \item linux-application-whitelisting/fapolicyd-extras
-    \item man: \texttt{fapolicyd(8)}, \texttt{fapolicyd.conf(5)},\\
-          \texttt{fapolicyd.rules(5)}, \texttt{fapolicyd-cli(8)},\\
-          \texttt{fagenrules(8)}, \texttt{fapolicyd-filter.conf(5)}
+    \item \texttt{github.com/linux-application-whitelisting/}
+          \begin{itemize}
+            \item \href{https://github.com/linux-application-whitelisting/fapolicyd}{\texttt{fapolicyd}}
+                  --- daemon, CLI, shipped rules
+            \item \href{https://github.com/linux-application-whitelisting/fapolicyd-selinux}{\texttt{fapolicyd-selinux}}
+                  --- policy module
+            \item \href{https://github.com/linux-application-whitelisting/fapolicyd-extras}{\texttt{fapolicyd-extras}}
+                  --- unsupported helpers
+          \end{itemize}
+    \item man: \texttt{fapolicyd(8)}, \texttt{fapolicyd-cli(8)}, \texttt{fagenrules(8)},\\
+          \texttt{fapolicyd.conf(5)}, \texttt{fapolicyd.rules(5)},
+          \texttt{fapolicyd-filter.conf(5)},\\
+          \texttt{fapolicyd.state(5)}, \texttt{fapolicyd.metrics(5)},
+          \texttt{fapolicyd.timing(5)}
   \end{itemize}
 \end{frame}
 
-\begin{frame}
-  \centering
-  {\LARGE Questions}\\[1.2em]
-  You should be able to configure it now.\\[0.6em]
-  Drill with \texttt{EXERCISES.md}
+\begin{frame}[standout]
+  Questions?
 \end{frame}
 
 \end{document}

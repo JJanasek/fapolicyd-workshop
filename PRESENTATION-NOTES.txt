@@ -1,10 +1,41 @@
 ================================================================================
 fapolicyd Power Users — slide notes (English)
 ================================================================================
-Use with presentation.pdf. Same titles as the slides. Then do EXERCISES.md.
+Use with presentation.pdf. Same section order as the slides.
+Checked against fapolicyd 2.0.1 (Fedora 44) and 2.0.2 (rawhide).
 
-Audience: SELinux / policy people. Focus = configure trust, rules.d, conf;
-triage FANOTIFY vs AVC. Not an intro to MAC.
+Audience: SELinux developers and maintainers. They know MAC, audit and policy.
+They do not know fapolicyd. Lean on the mapping table; skip MAC basics.
+
+Slide prompts: root# = admin via sudo, fapo$ = confined workshop user.
+
+
+================================================================================
+TIMING — 50 minutes, talk + one live demo (exercises are NOT in the 50)
+================================================================================
+  0:00  Title, goal, agenda                         2 min
+  0:02  Why                 (4 slides)              6 min
+  0:08  What you configure  (10 slides)            13 min
+  0:21  Configure           (4 slides)              6 min
+  0:27  Triage              (6 slides)              8 min
+  0:35  For maintainers     (3 slides)              5 min
+  0:40  Live demo           (2 slides)              6 min
+  0:46  Checklist, practice, questions              4 min
+
+Spend the time on: mapping table, exec-path diagram, the three ruleset
+slides, decision tree, reading the records.
+
+Running late? Skip in this order (each is self-study material):
+  1) Finding your way in the source
+  2) Rules — new in 2.0
+  3) Conf
+  4) Filter
+  5) CLI cheat, Anti-patterns (just show them)
+Never skip: Hard rule, the ruleset walk, Dual stack, the live demo.
+
+Exercises take 60–75 minutes on their own. Run them as a second session or
+as homework with ANSWERS.md.
+
 
 Glossary
 --------
@@ -17,15 +48,35 @@ pattern=ld_so special subject: dynamic-linker smuggle path
 
 
 ================================================================================
-WHY (short — they already know MAC)
+WHY
 ================================================================================
 
 Beside SELinux, not instead:
   SELinux = behavior (labels). fapolicyd = known artifact? (trust).
-  One Permission denied → AVC, FANOTIFY, or both.
+  Layered: SELinux is asked first, first denier wins.
 
-Gain: block unpackaged home/tmp/opt; stop ld.so smuggle; trust ≠ bin_t.
-Limits: root can disable it; not a MAC substitute.
+You already know most of this (mapping table):
+  This is the slide to slow down on. Two rows deserve a sentence each:
+  - Order. SELinux allow rules form a set; fapolicyd is first match.
+    Moving a file in rules.d changes policy.
+  - No audit2allow. The fix for "known software denied" is trust, not a
+    generated rule.
+  Error text differs: SELinux/DAC = "Permission denied" (EACCES),
+  fapolicyd = "Operation not permitted" (EPERM).
+
+Where it sits in an exec (diagram):
+  DAC → SELinux → fanotify permission event → fapolicyd.
+  The SELinux execute check happens while the file is being opened for
+  exec; the fanotify event comes after. A denial at any box ends the
+  attempt, so later boxes log nothing.
+  Dashed boxes are what you configure: trust sources and rules.
+
+What it does not stop:
+  Say this before they ask. Shell scripts are allowed by default.
+  ld_preload and static patterns ship commented out in 30-patterns.
+  Unwatched filesystems (watch_fs, ignore_mounts) are invisible to it.
+  Trusted interpreters still act on whatever data they are given.
+  Root can stop or reconfigure it.
 
 
 ================================================================================
@@ -33,75 +84,132 @@ WHAT YOU CONFIGURE
 ================================================================================
 
 Four places:
-  1) Trust DB
-  2) rules.d/
-  3) fapolicyd.conf
-  4) fapolicyd-filter.conf — which RPM paths enter trust (man 5)
+  1) Trust DB   2) rules.d/   3) fapolicyd.conf   4) fapolicyd-filter.conf
 
-Path: open/exec → fanotify → fapolicyd (trust + rules) → allow/deny
-Hard rule: never strace/gdb/ptrace the daemon (SIGSTOP → deadlock).
+Hard rule: never strace/gdb/ptrace the daemon.
+  SIGSTOP means no permission event gets answered.
+  2.0 service is Type=notify, WatchdogSec=10s, Restart=on-failure, so
+  systemd can restart a stalled daemon. Do not rely on it.
+  Nice for this audience: fapolicyd-selinux ships fapolicyd-hardening.cil
+  with a CIL deny rule: (deny domain fapolicyd_t (process (ptrace sigstop))).
 
-Trust: rpmdb (inside fapolicyd) + filedb (trust.d/).
-Filter: fapolicyd-filter.conf (+ include / - exclude). Applied at RPM
-import, not per decision. fapolicyd-cli --test-filter PATH. Not drilled.
+Trust: rpmdb (kept current by the rpm plugin) + filedb (trust.d/).
+  Entry = source, path, size, hash. Rules only see trust=1 / trust=0.
+  Hashes: SHA256 or SHA512; rule keyword FILE_HASH replaces SHA256HASH.
+
+Filter: fapolicyd-filter.conf (+ include / - exclude). Applied at trust
+  import, not per decision. Also --file add PATH --filter.
+  fapolicyd-cli --test-filter PATH. Not drilled.
 
 Rules: decision  permission  subject : object   (first match)
-known-libs: 42-trusted-elf allows trusted ELF execute for everyone.
-A later 55- ping deny never matches. Put exceptions BEFORE 42 (e.g. 39-).
-Shell scripts: shipped allow ftype=text/x-shellscript — use an ELF for deny labs.
+  Decisions: allow / deny, plus _audit, _syslog, _log (audit + syslog).
 
-Shipped pattern=ld_so:
-  deny_audit perm=any pattern=ld_so : all
-  = linker-smuggle subject → deny any object + audit.
-  Trusted ld.so does NOT bless untrusted ELF.
+Shipped ruleset (two slides) + "who wins?":
+  Read it top to bottom once, out loud. Then use the "who wins?" table as
+  a quiz: cover the right-hand columns and ask the room.
+  Points to make:
+  - 20-dracut is why root "bypasses" denials: uid=0 AND trusted subject.
+  - 21-updaters keeps rpm/dnf from being blocked mid-transaction.
+  - 30-patterns denies ld.so-started programs, trusted or not.
+  - 41 comes before 42 because every exec loads a dozen libraries.
+  - 70 denies untrusted language files; 72 allows every shell script.
+  - 90 is the catch-all for execute; 95 lets everything else be opened.
+  - A drop-in at 55- cannot restrict a trusted binary: 42 already allowed it.
 
-Integrity: none | size | ima | sha256. Try size before sha256.
+New in 2.0: path=glob:/opt/vendor/*/bin/tool (exe/path only, * stops at /);
+  double quotes for spaces; %languages+=mime for packages;
+  dir=untrusted deprecated. fapolicyd-cli --ftype FILE for ftype= rules.
+
+Conf: permissive=1 soak → fix → 0. integrity none|size|ima|sha256.
+  Newer: decision_threads (2.0), ignore_mounts, db_max_size=auto,
+  rpm_sha256_only, reset_strategy, timing_collection.
 
 
 ================================================================================
 CONFIGURE
 ================================================================================
 
-A — Install
-  dnf install fapolicyd
-  (rawhide: rpm-plugin-fapolicyd obsolete, folded into fapolicyd)
-  ≥1 audit rule (else deny_audit quiet):
+A — Install and verify
+  dnf install fapolicyd pulls the rpm plugin and fapolicyd-selinux.
+  F44 / 2.0.1: separate rpm-plugin-fapolicyd package.
+  Rawhide 2.0.2: fapolicyd ships the plugin, Obsoletes rpm-plugin-fapolicyd < 7.
+  ≥1 audit rule, else deny_audit is quiet:
     auditctl -a always,exit -F path=/etc/shadow -F perm=wa
-  systemctl enable --now fapolicyd
-  fapolicyd-cli --check-status / --list
+  fapolicyd-cli --check-status → Permissive: false, trust entries > 0.
 
 B — Trust /opt (default remediation)
   --file add /opt/myapp --trust-file myapp && --update
   Prefer trust trees over allow-rule sprawl.
 
-C — rules.d (who/how, not just “known”)
-  Number BEFORE allow perm=execute all : trust=1 (42-trusted-elf).
+C — rules.d (who/how, not just "known")
   Example: rules.d/39-ping.rules, gid=fapo_workshop (not wheel — fapo is in wheel).
-  One physical line per rule (fagenrules does not join continuations).
+  One physical line per rule.
   Apply: fagenrules --load   (NOT systemctl reload — no ExecReload).
   Or: fagenrules && fapolicyd-cli --reload-rules
-  Then --check-rules --lint → --list | nl (ping lines above 42).
+  Then --check-rules --lint → --list (ping lines above 42).
   Failed in-daemon reload keeps previous ruleset.
-  Run the test as fapo. Root hits uid=0 trust=1 first.
+  Test as fapo. Root hits uid=0 trust=1 first.
 
-D — Conf: permissive=1 soak → fix → 0; integrity none|size|ima|sha256
+
+================================================================================
+TRIAGE
+================================================================================
 
 Denied?
-  1) ausearch -m AVC
-  2) ausearch -m FANOTIFY -i
-     Compact FANOTIFY often has NO path (-f may miss).
-     Path + rule:N → --debug-deny
-  3) unclear → stop; fapolicyd --permissive --debug-deny; reproduce
+  1) Error text: EPERM = fapolicyd, EACCES = SELinux/DAC
+  2) ausearch -m AVC
+  3) ausearch -m FANOTIFY -i
+     known software → trust; who/how → rules.d
+  4) Unclear → deny_log or --debug-deny
 
-Dual stack: one binary can hit BOTH.
-  Wrong label → AVC; untrusted → FANOTIFY. Fix each layer.
-  Use type tmp_t. user_tmp_t is executable by staff_t while
-  staff_exec_content is on (default) — FANOTIFY only.
+Reading the records:
+  FANOTIFY record, kernel >= 6.3: resp (2 = deny), fan_info = rule number
+  in HEX (same numbering as fapolicyd-cli --list), subj_trust / obj_trust
+  (0 no, 1 yes, 2 unknown).
+  Daemon line: rule=N dec=… perm=… auid=… pid=… exe=… : path=… ftype=… trust=…
+  The values on the slide are illustrative. Replace them with a record
+  captured on the lab VM if you have one.
+
+Dual stack: one binary can be wrong for BOTH layers.
+  Wrong label → AVC first; untrusted → FANOTIFY next. One attempt
+  normally logs only the first denier. Fix each layer.
+  Lab: type tmp_t. user_tmp_t is executable by staff_t while
+  staff_exec_content is on (default).
   restorecon on /var/tmp often does nothing (file_contexts <<none>>).
 
-FANOTIFY deny: known software? → trust. Who/how? → rules.d.
+Debug:
+  a) Without stopping: rule deny_audit → deny_log, fagenrules --load,
+     journalctl -b -u fapolicyd. Prefer this on real hosts.
+  b) Foreground: stop; mkdir -p /run/fapolicyd (2.0.1: systemd removes it
+     on stop and the daemon needs it for its pid file);
+     fapolicyd --permissive --debug-deny; reproduce. Lab only.
+  Per-rule hit counts: fapolicyd-cli --check-metrics.
 
-Anti-patterns: allow sprawl; edit compiled.rules; SELinux allow ⇒ fapolicyd allow.
+Anti-patterns: allow sprawl; edit compiled.rules; test as root;
+SELinux allow ⇒ fapolicyd allow; stopping the daemon on a real host.
+
+
+================================================================================
+FOR MAINTAINERS
+================================================================================
+
+How trust stays current:
+  rpm/dnf transaction → rpm plugin → /run/fapolicyd/fapolicyd.fifo → daemon
+  rebuilds the trust DB (LMDB, /var/lib/fapolicyd).
+  21-updaters exists to avoid the updater/daemon deadlock.
+  Failed reloads keep the active generation (1.5 rules, 1.6 trust).
+
+fapolicyd-selinux:
+  fapolicyd_t is an init daemon domain. It is broad by necessity:
+  files_read_all_files, files_mmap_all_files, domain_read_all_domains_state,
+  watch_with_perm on all file types, capabilities sys_admin / sys_ptrace /
+  dac_override. Worth a discussion: what can be tightened?
+  fapolicyd-hardening.cil is a separate optional module.
+
+Source tour: src/daemon, src/library, src/cli, src/tests (+ stress,
+perf-test), rules.d/, ChangeLog.
+  ADD HERE: our own process — who reviews, how releases reach Fedora/RHEL,
+  where bugs are tracked. Not on the slides yet.
 
 
 ================================================================================
@@ -113,11 +221,8 @@ Prep: sudo ./demos/00-lab-prep.sh
   Plain su -/runuser skip pam_selinux → stay unconfined → no AVC.
   sudoers: ROLE=unconfined_r TYPE=unconfined_t so CLI/trust still work.
 
-Why not root?
-  allow perm=any uid=0 trust=1 : all
-  → root + trusted shell often ALLOWS untrusted /opt. Deny as fapo.
-
-Live: id -u ≠ 0 → copy ls → DENY → --file add + --update → ALLOW.
+Live: id -u ≠ 0 → copy ls → DENY (Operation not permitted) →
+  --file add + --update → runs.
 
 Reset: sudo ./demos/99-cleanup.sh
 
@@ -129,9 +234,13 @@ LEAVE ABLE TO
 [ ] Install + verify status
 [ ] Trust an /opt tree + --update
 [ ] Add / reload a rules.d drop-in
-[ ] Map rule:N via --debug-deny when needed
+[ ] Get the full decision line (rule=N) via deny_log / --debug-deny
 [ ] Triage AVC vs FANOTIFY (dual stack)
+[ ] Explain the shipped ruleset top to bottom
+
+Discussion starters: where do we run it ourselves; what belongs in
+fapolicyd-selinux vs selinux-policy; how to teach users AVC vs FANOTIFY.
 
 Extras / deep dive: github.com/linux-application-whitelisting/fapolicyd-extras
 
-Next: EXERCISES.md → TAKE-HOME.md → demos/showcases/
+Next: EXERCISES.md (+ ANSWERS.md) → TAKE-HOME.md → demos/showcases/

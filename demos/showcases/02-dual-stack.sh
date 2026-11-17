@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SHOWCASE: one binary — try for AVC and FANOTIFY.
+# SHOWCASE: one binary, wrong for both layers — AVC first, then FANOTIFY.
+# SELinux is asked before fapolicyd, so each attempt logs the first denier.
 # FANOTIFY needs non-root. as_user wraps runcon → staff_t for AVC.
 # Plain su/runuser stay unconfined_t (FANOTIFY only).
 set -euo pipefail
@@ -21,6 +22,7 @@ echo "runner will be: ${WORKSHOP_USER} (or current non-root)"
 as_user id -Z 2>/dev/null || id -Z 2>/dev/null || true
 
 echo
+START=$(date +%T)
 echo "=== exec as ${WORKSHOP_USER} ==="
 set +e
 as_user "${BIN}"; echo "exit=$?"
@@ -28,13 +30,14 @@ set -e
 
 echo
 echo "=== SELinux AVCs (may be empty if runner is unconfined_t) ==="
-ausearch --start recent -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
+ausearch --start "${START}" -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
 
 echo
 echo "=== fapolicyd FANOTIFY (no -f: compact events often lack path) ==="
-ausearch --start recent -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
+ausearch --start "${START}" -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
 
 echo
-echo "chcon -t bin_t → AVC gone, FANOTIFY remains (still untrusted)."
-echo "trust alone → FANOTIFY gone; AVC may remain while type is tmp_t."
+echo "Permission denied = SELinux/DAC (EACCES); Operation not permitted = fapolicyd (EPERM)."
+echo "chcon -t bin_t → AVC gone, now FANOTIFY denies (still untrusted)."
+echo "trust alone → AVC remains while type is tmp_t."
 echo "restorecon on /var/tmp often changes nothing (file_contexts <<none>>)."

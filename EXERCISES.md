@@ -27,6 +27,7 @@ Always **`sudo fapolicyd-cli`** here (sudoers → `unconfined_t` for admin).
 Prep enters `staff_t` via `runcon` so dual-stack can emit AVC.
 
 For each exercise: **Predict → Do → Check** (notes file).
+Expected results: **[ANSWERS.md](ANSWERS.md)** — look only after you tried.
 
 ---
 
@@ -57,15 +58,18 @@ sudo chmod 755 /opt/fapo-workshop/my-ls
 cmp -s /usr/bin/ls /opt/fapo-workshop/my-ls && echo identical-bytes
 
 id -u    # must NOT be 0
-/opt/fapo-workshop/my-ls          # expect DENY
-echo $?
+/opt/fapo-workshop/my-ls          # expect DENY: "Operation not permitted" (EPERM)
+echo $?                           # SELinux/DAC would say "Permission denied" (EACCES)
 
 # Compact FANOTIFY often has no path — prefer:
 sudo ausearch --start recent -m FANOTIFY -i
 ```
 
 If empty: `sudo auditctl -l` (need ≥1 rule), re-deny, search again.  
-**Path / `rule:N`** → Exercise 4 (`--debug-deny`).
+Kernel ≥ 6.3: the record carries `fan_info` (rule number as in
+`fapolicyd-cli --list`, but **hex** in the raw record: `fan_info=B` = rule 11),
+`subj_trust`, `obj_trust`.  
+**Full line (`rule=N … path=…`)** → Exercise 4 (`--debug-deny`).
 
 **Heal:** `--file add … --trust-file workshop` + `--update`; run again as `fapo`.
 
@@ -75,33 +79,43 @@ If empty: `sudo auditctl -l` (need ≥1 rule), re-deny, search again.
 
 ## Exercise 3 — ld.so smuggle
 
-**Goal:** Trusted loader does not bless untrusted ELF. As **`fapo`**.
+**Goal:** Starting a program through the loader is denied — even a trusted one. As **`fapo`**.
 
 ```bash
 id -u
-sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls --trust-file workshop 2>/dev/null
-sudo fapolicyd-cli --update
-
 LDSO=$(find /usr/lib64 /lib64 -name 'ld-linux-*.so.*' | head -1)
 echo "loader=$LDSO"
-"$LDSO" /opt/fapo-workshop/my-ls
+
+"$LDSO" /usr/bin/ls                  # trusted RPM binary — still DENY
+echo $?
+"$LDSO" /opt/fapo-workshop/my-ls     # trusted or not — DENY
 echo $?
 
 sudo fapolicyd-cli --list | grep -n ld_so
 ```
 
 Read: `deny_audit perm=any pattern=ld_so : all`  
-= subject looks like linker smuggle → deny any object + audit.
+= subject looks like linker smuggle → deny any object + audit.  
+Without it the loader only *opens* the ELF, and `95-allow-open` would allow that.
+
+Then remove the trust again (later exercises expect `my-ls` untrusted):
+
+```bash
+sudo fapolicyd-cli --file delete /opt/fapo-workshop/my-ls --trust-file workshop
+sudo fapolicyd-cli --update
+```
 
 ---
 
 ## Exercise 4 — Debug X-ray *(optional)*
 
-Same deny as Ex2, deeper: `--debug-deny` for `file=` / `rule:N` (ausearch often omits both).
+Same deny as Ex2, deeper: `--debug-deny` prints the full decision line:
+`rule=N dec=deny_audit perm=execute auid=… pid=… exe=… : path=… ftype=… trust=0`
 
 ```bash
 # Terminal A
 sudo systemctl stop fapolicyd
+sudo mkdir -p /run/fapolicyd     # 2.0.1: systemd removes it on stop; daemon needs it for its pid file
 sudo fapolicyd --permissive --debug-deny
 
 # Terminal B as fapo
@@ -112,11 +126,20 @@ cp /usr/bin/ls /tmp/xray-ls && chmod +x /tmp/xray-ls
 Map `N`: `sudo fapolicyd-cli --list | nl -ba | sed -n '1,100p'`  
 Ctrl-C → `sudo systemctl start fapolicyd` → `rm -f /tmp/xray-ls`.
 
+**Without stopping the daemon:** change the matching rule from `deny_audit` to
+`deny_log`, `sudo fagenrules --load`, reproduce, then
+`journalctl -b -u fapolicyd` shows the same line. Per-rule hit counts:
+`sudo fapolicyd-cli --check-metrics`.
+
 ---
 
 ## Exercise 5 — Dual stack (SELinux × fapolicyd)
 
-**Goal:** One binary, two denial classes when confined.
+**Goal:** One binary, wrong for both layers — meet them one at a time.
+
+SELinux is asked before fapolicyd gets the fanotify event, so one attempt
+normally logs only the first denier. Use a fresh timestamp for each attempt
+(`--start recent` also shows FANOTIFY from earlier exercises).
 
 Check `id -Z` contains **`staff_t`** (not `unconfined_t`).
 If you used plain `su -`, re-enter:
@@ -134,13 +157,16 @@ sudo chmod 755 /var/tmp/fapo-workshop/dual
 sudo chcon -t tmp_t /var/tmp/fapo-workshop/dual
 
 ls -lZ /var/tmp/fapo-workshop/dual
-/var/tmp/fapo-workshop/dual; echo exit=$?
+T=$(date +%T)
+/var/tmp/fapo-workshop/dual; echo exit=$?     # note the error text
 
-sudo ausearch --start recent -m AVC | tail -20
-sudo ausearch --start recent -m FANOTIFY -i | tail -20
+sudo ausearch --start $T -m AVC | tail -20
+sudo ausearch --start $T -m FANOTIFY -i | tail -20
 ```
 
-**Answer:** Which messages? `chcon -t bin_t` (drop AVC only) → what still fails?
+**Answer:** Which record(s) for this one attempt, and which error text
+(*Permission denied* vs *Operation not permitted*)?
+`chcon -t bin_t` (drop AVC only) → what fails now, with which error?
 Trust the file only → what still fails on `tmp_t`?
 (`restorecon` on `/var/tmp` often changes nothing — `file_contexts` is `<<none>>`.)
 

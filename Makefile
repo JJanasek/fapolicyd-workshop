@@ -1,5 +1,5 @@
 # Build the workshop Beamer deck
-# Prefers system TeX; falls back to local TinyTeX under .tools/
+# Prefers system TeX; falls back to local TinyTeX under .tools/, then tectonic
 
 PDF = presentation.pdf
 TEX = presentation.tex
@@ -17,8 +17,10 @@ $(PDF): $(TEX)
 	elif [ -x "$(TINYTEX_BIN)/pdflatex" ]; then \
 	  export PATH="$(TINYTEX_BIN):$$PATH"; \
 	  PDFLATEX=pdflatex; \
+	elif command -v tectonic >/dev/null 2>&1; then \
+	  exec tectonic $(TEX); \
 	else \
-	  echo "ERROR: pdflatex/beamer not found. Install TeX Live or keep .tools/.TinyTeX"; \
+	  echo "ERROR: pdflatex/beamer not found. Install TeX Live, tectonic, or keep .tools/.TinyTeX"; \
 	  exit 1; \
 	fi; \
 	$$PDFLATEX -interaction=nonstopmode $(TEX); \
