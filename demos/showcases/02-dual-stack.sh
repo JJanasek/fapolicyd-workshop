@@ -15,29 +15,57 @@ chmod 755 "${BIN}"
 # user_tmp_t is executable by staff_t while staff_exec_content is on.
 # tmp_t is not — that is the AVC. cp -a would otherwise keep bin_t.
 chcon -t tmp_t "${BIN}"
+# Re-run safe: drop trust left over from a previous run (round 3).
+if fapolicyd-cli --file delete "${BIN}" >/dev/null 2>&1; then
+  fapolicyd-cli --update; sleep 1
+fi
 
-echo "=== context ==="
-ls -lZ "${BIN}" 2>/dev/null || ls -l "${BIN}"
-echo "runner will be: ${WORKSHOP_USER} (or current non-root)"
-as_user id -Z 2>/dev/null || id -Z 2>/dev/null || true
+if [[ ${EUID} -ne 0 ]]; then
+  echo "Run with sudo (needs chcon and ausearch)" >&2
+  exit 1
+fi
+
+pause() {   # let the presenter talk between rounds
+  [[ -t 0 ]] && read -r -p "--- Enter for: $1 ---" _ || true
+}
+
+attempt() {
+  local start
+  start=$(date +%T)
+  ls -Z "${BIN}"
+  set +e
+  as_user "${BIN}"; echo "exit=$?"
+  set -e
+  echo "--- AVC ---"
+  ausearch -ts "${start}" -m AVC 2>/dev/null | grep -F 'dual' || echo "(no AVC)"
+  echo "--- FANOTIFY ---"
+  ausearch -ts "${start}" -m FANOTIFY -i 2>/dev/null | tail -4 || true
+  ausearch -ts "${start}" -m FANOTIFY >/dev/null 2>&1 || echo "(no FANOTIFY)"
+}
+
+echo "=== runner ==="
+as_user id -Z
 
 echo
-START=$(date +%T)
-echo "=== exec as ${WORKSHOP_USER} ==="
-set +e
-as_user "${BIN}"; echo "exit=$?"
-set -e
+echo "=== Round 1: wrong label (tmp_t) AND untrusted ==="
+attempt
+echo "→ Permission denied (EACCES): SELinux answered. fapolicyd was never asked."
+
+pause "fix the label only (chcon -t bin_t)"
+echo
+echo "=== Round 2: label fixed (bin_t), still untrusted ==="
+chcon -t bin_t "${BIN}"
+attempt
+echo "→ Operation not permitted (EPERM): now fapolicyd answers."
+
+pause "trust the file"
+echo
+echo "=== Round 3: label fixed AND trusted ==="
+fapolicyd-cli --file add "${BIN}" --trust-file showcase >/dev/null
+fapolicyd-cli --update
+sleep 1
+attempt
+echo "→ runs. Two layers, two fixes."
 
 echo
-echo "=== SELinux AVCs (may be empty if runner is unconfined_t) ==="
-ausearch -ts "${START}" -m AVC 2>/dev/null | tail -25 || echo "(no AVC)"
-
-echo
-echo "=== fapolicyd FANOTIFY (no -f: compact events often lack path) ==="
-ausearch -ts "${START}" -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
-
-echo
-echo "Permission denied = SELinux/DAC (EACCES); Operation not permitted = fapolicyd (EPERM)."
-echo "chcon -t bin_t → AVC gone, now FANOTIFY denies (still untrusted)."
-echo "trust alone → AVC remains while type is tmp_t."
-echo "restorecon on /var/tmp often changes nothing (file_contexts <<none>>)."
+echo "Clean up: sudo ./demos/99-cleanup.sh"

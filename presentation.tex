@@ -499,6 +499,24 @@ rule=11 dec=deny_audit perm=execute auid=1001 pid=4242
   Diagnosed an untrusted execute, applied the standard fix, verified
 \end{frame}
 
+\begin{frame}[fragile]{Dual stack, live}
+  \begin{semiverbatim}
+\rootp demos/showcases/02-dual-stack.sh
+  \end{semiverbatim}
+  \begin{tabular}{@{}llll@{}}
+    \toprule
+    Round & File is & Result & Record \\
+    \midrule
+    1 & \texttt{tmp\_t}, untrusted & \no{Permission denied} & AVC only \\
+    2 & \texttt{bin\_t}, untrusted & \no{Operation not permitted} & FANOTIFY only \\
+    3 & \texttt{bin\_t}, trusted & \ok{runs} & none \\
+    \bottomrule
+  \end{tabular}
+
+  \bigskip
+  Two layers, two fixes --- fix the one that answered, then test again
+\end{frame}
+
 %=====================================================================
 \section{You leave able to}
 

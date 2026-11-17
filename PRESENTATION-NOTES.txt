@@ -11,27 +11,27 @@ Slide prompts: root# = admin via sudo, fapo$ = confined workshop user.
 
 
 ================================================================================
-TIMING — 50 minutes, talk + one live demo (exercises are NOT in the 50)
+TIMING — 50 minutes, talk + two live demos (exercises are NOT in the 50)
 ================================================================================
   0:00  Title, goal, agenda                         2 min
   0:02  Why                 (4 slides)              6 min
   0:08  What you configure  (10 slides)            13 min
   0:21  Configure           (4 slides)              6 min
   0:27  Triage              (6 slides)              8 min
-  0:35  For maintainers     (3 slides)              5 min
-  0:40  Live demo           (2 slides)              6 min
+  0:35  For maintainers     (2 slides)              3 min
+  0:38  Live demos          (3 slides)              8 min
   0:46  Checklist, practice, questions              4 min
 
 Spend the time on: mapping table, exec-path diagram, the three ruleset
 slides, decision tree, reading the records.
 
+Already skipped in this plan: Finding your way in the source, Rules — new
+in 2.0 (flip past them; they pay for the dual-stack demo).
 Running late? Skip in this order (each is self-study material):
-  1) Finding your way in the source
-  2) Rules — new in 2.0
-  3) Conf
-  4) Filter
-  5) CLI cheat, Anti-patterns (just show them)
-Never skip: Hard rule, the ruleset walk, Dual stack, the live demo.
+  1) Conf
+  2) Filter
+  3) CLI cheat, Anti-patterns (just show them)
+Never skip: Hard rule, the ruleset walk, Dual stack, the live demos.
 
 Exercises take 60–75 minutes on their own. Run them as a second session or
 as homework with ANSWERS.md.
@@ -224,6 +224,13 @@ Prep: sudo ./demos/00-lab-prep.sh
 
 Live: id -u ≠ 0 → copy ls → DENY (Operation not permitted) →
   --file add + --update → runs.
+
+Dual stack, live: sudo ./demos/showcases/02-dual-stack.sh  (~2 min)
+  Three rounds, pauses on Enter between them:
+  1) tmp_t + untrusted  → Permission denied, AVC only, no FANOTIFY
+  2) chcon -t bin_t     → Operation not permitted, FANOTIFY only
+  3) trust + --update   → runs
+  Round 1 confirmed on the lab VM; rounds 2-3 rehearse before the talk.
 
 Reset: sudo ./demos/99-cleanup.sh
 
