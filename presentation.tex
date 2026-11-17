@@ -364,21 +364,21 @@ filedb /opt/myapp/bin/x  SIZE  HASH
 \end{frame}
 
 \begin{frame}[fragile]{Reading the records}
-  Audit record (kernel $\ge$ 6.3) --- field layout:
-  \begin{semiverbatim}
-type=FANOTIFY resp=2 fan_type=1 fan_info=B subj_trust=2 obj_trust=0
+  Audit record, \texttt{ausearch -m FANOTIFY -i} (kernel $\ge$ 6.3):
+  \begin{semiverbatim}\footnotesize
+type=FANOTIFY ... : resp=deny fan_type=rule_info fan_info=13
+  subj_trust=unknown obj_trust=no
   \end{semiverbatim}
-  {\small \texttt{resp=2} deny \quad \texttt{fan\_info} rule number, \textbf{hex}
-  (B = rule 11) \quad trust: 0 no, 1 yes, 2 unknown}
+  {\footnotesize \texttt{fan\_info} = rule number in \textbf{hex} (13 = rule 19). No path, no exe.}
 
-  \vspace{0.6em}
+  \vspace{0.2em}
   Daemon line (debug mode, or syslog with \texttt{deny\_log}):
-  \begin{semiverbatim}
-rule=11 dec=deny_audit perm=execute auid=1001 pid=4242
-  exe=/usr/bin/bash : path=/opt/x/my-ls
+  \begin{semiverbatim}\footnotesize
+rule=19 dec=deny_audit perm=execute auid=1001 pid=4242
+  exe=/usr/bin/bash : path=/var/tmp/fapo-workshop/dual
   ftype=application/x-executable trust=0
   \end{semiverbatim}
-  {\small Same rule numbering as \texttt{fapolicyd-cli \dd list}. Values here are illustrative.}
+  {\footnotesize Same numbering as \texttt{fapolicyd-cli \dd list}. Record is real (F44); line is illustrative.}
 \end{frame}
 
 \begin{frame}{Dual stack}

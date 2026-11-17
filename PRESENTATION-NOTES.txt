@@ -167,8 +167,11 @@ Reading the records:
   in HEX (same numbering as fapolicyd-cli --list), subj_trust / obj_trust
   (0 no, 1 yes, 2 unknown).
   Daemon line: rule=N dec=… perm=… auid=… pid=… exe=… : path=… ftype=… trust=…
-  The values on the slide are illustrative. Replace them with a record
-  captured on the lab VM if you have one.
+  The audit record on the slide is real (Fedora 44 lab VM, dual-stack
+  round 2): fan_info=13 is hex, so rule 19. With -i, ausearch prints
+  resp=deny and trust as no/yes/unknown. The daemon line is illustrative.
+  Point out: the audit record has no path — that is why you need the
+  daemon line.
 
 Dual stack: one binary can be wrong for BOTH layers.
   Wrong label → AVC first; untrusted → FANOTIFY next. One attempt
@@ -230,7 +233,7 @@ Dual stack, live: sudo ./demos/showcases/02-dual-stack.sh  (~2 min)
   1) tmp_t + untrusted  → Permission denied, AVC only, no FANOTIFY
   2) chcon -t bin_t     → Operation not permitted, FANOTIFY only
   3) trust + --update   → runs
-  Round 1 confirmed on the lab VM; rounds 2-3 rehearse before the talk.
+  All three rounds and a re-run confirmed on the Fedora 44 lab VM.
 
 Reset: sudo ./demos/99-cleanup.sh
 
