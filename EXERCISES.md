@@ -5,7 +5,7 @@
 **Order:**
 
 1. `sudo ./demos/00-lab-prep.sh` — once as root (creates confined `fapo`)  
-2. You should land as **`fapo`** (prep does `su -`)  
+2. You should land as **`fapo` in `staff_t`** (prep uses `runcon`; plain `su -` stays unconfined)  
 3. Core path **1 → 2 → 3 → 5 → 6**  
 4. Exercise 4 — optional (`--debug-deny` / `rule:N`)  
 5. `demos/showcases/` — present later (3 scripts)  
@@ -23,7 +23,8 @@ Shipped roughly: `allow perm=any uid=0 trust=1 : all`
 | `fapo` | Run binaries, feel deny/allow |
 | `sudo` | `fapolicyd-cli`, `systemctl`, `ausearch`, trust / rules |
 
-Always **`sudo fapolicyd-cli`** here. Prep maps `fapo` → `staff_u` so dual-stack can emit AVC.
+Always **`sudo fapolicyd-cli`** here (sudoers → `unconfined_t` for admin).
+Prep enters `staff_t` via `runcon` so dual-stack can emit AVC.
 
 For each exercise: **Predict → Do → Check** (notes file).
 
@@ -117,15 +118,20 @@ Ctrl-C → `sudo systemctl start fapolicyd` → `rm -f /tmp/xray-ls`.
 
 **Goal:** One binary, two denial classes when confined.
 
-Prep should give `staff_u` — check `id -Z` (not `unconfined_t`).
+Check `id -Z` contains **`staff_t`** (not `unconfined_t`).
+If you used plain `su -`, re-enter:
+`runuser -u fapo -- runcon staff_u:staff_r:staff_t:s0 bash -l`
+
+Use **`tmp_t`**. `user_tmp_t` is executable by `staff_t` while
+`staff_exec_content` is on (default), so you only see FANOTIFY.
+`cp -a` also keeps `bin_t`, which `staff_t` may execute.
 
 ```bash
 id -u; id -Z
 sudo mkdir -p /var/tmp/fapo-workshop
 sudo cp -a /usr/bin/id /var/tmp/fapo-workshop/dual
 sudo chmod 755 /var/tmp/fapo-workshop/dual
-sudo chcon -t user_tmp_t /var/tmp/fapo-workshop/dual 2>/dev/null \
-  || sudo chcon -t tmp_t /var/tmp/fapo-workshop/dual
+sudo chcon -t tmp_t /var/tmp/fapo-workshop/dual
 
 ls -lZ /var/tmp/fapo-workshop/dual
 /var/tmp/fapo-workshop/dual; echo exit=$?
@@ -134,7 +140,9 @@ sudo ausearch --start recent -m AVC | tail -20
 sudo ausearch --start recent -m FANOTIFY -i | tail -20
 ```
 
-**Answer:** Which messages? Only `restorecon` → what still fails? Only trust → what still fails?
+**Answer:** Which messages? `chcon -t bin_t` (drop AVC only) → what still fails?
+Trust the file only → what still fails on `tmp_t`?
+(`restorecon` on `/var/tmp` often changes nothing — `file_contexts` is `<<none>>`.)
 
 ---
 
@@ -142,22 +150,32 @@ sudo ausearch --start recent -m FANOTIFY -i | tail -20
 
 ### 6a — Trust an `/opt` tree
 
-Create `/opt/myapp/bin/hello` (script or copied binary). Fail as `fapo`, then allow using **only** the trust DB (no custom allow).
+Copy an **ELF** to `/opt/myapp/bin/hello` (e.g. `/usr/bin/id`). A shell script
+often already runs (`allow … ftype=text/x-shellscript`). Fail as `fapo`, then
+allow using **only** the trust DB (no custom allow).
 
 Notes deliverable: commands, dump-db line, before/after exit codes.
 
 ### 6b — `rules.d` drop-in *(required)*
 
-Allow `ping` only for a group you create. Reload safely. Prove deny, then allow after `usermod -aG` + re-login.
+Allow `ping` only for a group you create (not `wheel` — prep puts `fapo` in `wheel`).
+Prove deny as `fapo`, then allow after `usermod -aG` + re-login.
 
-Hint shape (place **above** catch-all deny):
+File must sort **before** `42-trusted-elf` (`allow perm=execute all : trust=1`).
+`55-` is too late — first match already allowed trusted ping.
 
 ```text
+# /etc/fapolicyd/rules.d/39-ping.rules
 allow perm=any gid=YOURGROUP : trust=1 path=/usr/bin/ping
 deny_audit perm=execute all : trust=1 path=/usr/bin/ping
 ```
 
-`fagenrules` → `--check-rules --lint` → `systemctl reload fapolicyd`.
+`fagenrules --load` (not `systemctl reload` — that does not load rules).  
+Then `--check-rules --lint`. Confirm ping lines sit above the trusted-ELF allow:
+
+```bash
+sudo fapolicyd-cli --list | nl -ba | grep -n -E 'ping|trust=1$'
+```
 
 ---
 

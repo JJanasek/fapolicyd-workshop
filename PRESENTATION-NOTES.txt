@@ -32,20 +32,30 @@ Limits: root can disable it; not a MAC substitute.
 WHAT YOU CONFIGURE
 ================================================================================
 
-Three places: Trust DB · rules.d/ · fapolicyd.conf
+Four places:
+  1) Trust DB
+  2) rules.d/
+  3) fapolicyd.conf
+  4) fapolicyd-filter.conf — which RPM paths enter trust (man 5)
 
 Path: open/exec → fanotify → fapolicyd (trust + rules) → allow/deny
 Hard rule: never strace/gdb/ptrace the daemon (SIGSTOP → deadlock).
 
-Trust: rpmdb (RPM + plugin) + filedb (you, trust.d/).
+Trust: rpmdb (inside fapolicyd) + filedb (trust.d/).
+Filter: fapolicyd-filter.conf (+ include / - exclude). Applied at RPM
+import, not per decision. fapolicyd-cli --test-filter PATH. Not drilled.
+
 Rules: decision  permission  subject : object   (first match)
+known-libs: 42-trusted-elf allows trusted ELF execute for everyone.
+A later 55- ping deny never matches. Put exceptions BEFORE 42 (e.g. 39-).
+Shell scripts: shipped allow ftype=text/x-shellscript — use an ELF for deny labs.
 
 Shipped pattern=ld_so:
   deny_audit perm=any pattern=ld_so : all
   = linker-smuggle subject → deny any object + audit.
   Trusted ld.so does NOT bless untrusted ELF.
 
-Integrity: none → size (pragmatic) → sha256 (expensive).
+Integrity: none | size | ima | sha256. Try size before sha256.
 
 
 ================================================================================
@@ -53,8 +63,10 @@ CONFIGURE
 ================================================================================
 
 A — Install
-  dnf install fapolicyd fapolicyd-selinux rpm-plugin-fapolicyd
-  ≥1 audit rule (else deny_audit quiet): auditctl -w /etc/shadow -p w
+  dnf install fapolicyd
+  (rawhide: rpm-plugin-fapolicyd obsolete, folded into fapolicyd)
+  ≥1 audit rule (else deny_audit quiet):
+    auditctl -a always,exit -F path=/etc/shadow -F perm=wa
   systemctl enable --now fapolicyd
   fapolicyd-cli --check-status / --list
 
@@ -63,10 +75,16 @@ B — Trust /opt (default remediation)
   Prefer trust trees over allow-rule sprawl.
 
 C — rules.d (who/how, not just “known”)
-  Number above catch-all deny. fagenrules → --check-rules --lint → reload.
-  Bad candidate → previous ruleset kept.
+  Number BEFORE allow perm=execute all : trust=1 (42-trusted-elf).
+  Example: rules.d/39-ping.rules, gid=fapo_workshop (not wheel — fapo is in wheel).
+  One physical line per rule (fagenrules does not join continuations).
+  Apply: fagenrules --load   (NOT systemctl reload — no ExecReload).
+  Or: fagenrules && fapolicyd-cli --reload-rules
+  Then --check-rules --lint → --list | nl (ping lines above 42).
+  Failed in-daemon reload keeps previous ruleset.
+  Run the test as fapo. Root hits uid=0 trust=1 first.
 
-D — Conf: permissive=1 soak → fix → 0; integrity=size before sha256
+D — Conf: permissive=1 soak → fix → 0; integrity none|size|ima|sha256
 
 Denied?
   1) ausearch -m AVC
@@ -77,6 +95,9 @@ Denied?
 
 Dual stack: one binary can hit BOTH.
   Wrong label → AVC; untrusted → FANOTIFY. Fix each layer.
+  Use type tmp_t. user_tmp_t is executable by staff_t while
+  staff_exec_content is on (default) — FANOTIFY only.
+  restorecon on /var/tmp often does nothing (file_contexts <<none>>).
 
 FANOTIFY deny: known software? → trust. Who/how? → rules.d.
 
@@ -87,7 +108,10 @@ Anti-patterns: allow sprawl; edit compiled.rules; SELinux allow ⇒ fapolicyd al
 LIVE
 ================================================================================
 
-Prep: sudo ./demos/00-lab-prep.sh → lands as fapo (staff_u for AVC labs).
+Prep: sudo ./demos/00-lab-prep.sh
+  → fapo via runcon staff_u:staff_r:staff_t:s0 (id -Z → staff_t).
+  Plain su -/runuser skip pam_selinux → stay unconfined → no AVC.
+  sudoers: ROLE=unconfined_r TYPE=unconfined_t so CLI/trust still work.
 
 Why not root?
   allow perm=any uid=0 trust=1 : all
@@ -107,5 +131,7 @@ LEAVE ABLE TO
 [ ] Add / reload a rules.d drop-in
 [ ] Map rule:N via --debug-deny when needed
 [ ] Triage AVC vs FANOTIFY (dual stack)
+
+Extras / deep dive: github.com/linux-application-whitelisting/fapolicyd-extras
 
 Next: EXERCISES.md → TAKE-HOME.md → demos/showcases/

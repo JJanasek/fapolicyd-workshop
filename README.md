@@ -5,7 +5,7 @@ For SELinux / policy people: **configure and triage** fapolicyd (trust, `rules.d
 ## Path
 
 ```
-1) sudo ./demos/00-lab-prep.sh   ← root once (creates confined user fapo)
+1) sudo ./demos/00-lab-prep.sh   ← root once (fapo in staff_t via runcon)
 2) presentation.pdf
    + PRESENTATION-NOTES.txt
 3) EXERCISES.md                  ← type, predict, answer

@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
-# SHOWCASE: RPM-trusted ping, still denied unless you're in the group.
+# SHOWCASE: RPM-trusted ping, denied unless you're in the group.
+# Run as root. The ping itself runs as fapo — root hits
+# allow perm=any uid=0 trust=1 : all before any later ping rule.
 set -euo pipefail
-RULE=/etc/fapolicyd/rules.d/55-showcase-ping.rules
+. "$(dirname "$0")/../lib.sh"
+
+if [[ ${EUID} -ne 0 ]]; then
+  echo "Run as root: sudo $0" >&2
+  echo "Ping is executed as ${WORKSHOP_USER}." >&2
+  exit 1
+fi
+
+RULE=/etc/fapolicyd/rules.d/39-showcase-ping.rules
 GROUP=fapo_showcase
 
 getent group "${GROUP}" >/dev/null || groupadd "${GROUP}"
 
 cat >"${RULE}" <<EOF
-# showcase: only ${GROUP} may execute ping (even though RPM-trusted)
+# BEFORE 42-trusted-elf — else trusted ping is already allowed
 allow perm=any gid=${GROUP} : trust=1 path=/usr/bin/ping
 deny_audit perm=execute all : trust=1 path=/usr/bin/ping
 EOF
 
-fagenrules
-systemctl reload fapolicyd || systemctl restart fapolicyd
+fagenrules --load || { fagenrules; fapolicyd-cli --reload-rules; } \
+  || systemctl restart fapolicyd
 sleep 1
 
-echo "=== ping as current user (likely DENY) ==="
+echo "=== assembled (ping lines must sit above trusted-ELF allow) ==="
+fapolicyd-cli --list | nl -ba | grep -n -E 'ping|42-trusted|trust=1' | head -20 || true
+
+echo
+echo "=== ping as ${WORKSHOP_USER} (expect DENY if not in ${GROUP}) ==="
 set +e
-/usr/bin/ping -c1 127.0.0.1
+as_user /usr/bin/ping -c1 127.0.0.1
 echo "exit=$?"
 set -e
 
 echo
-echo "Add yourself: sudo usermod -aG ${GROUP} \$USER  && re-login, then retry."
-echo "Trust = known?; rules = who/how."
-echo "Cleanup: rm -f ${RULE} && fagenrules && systemctl reload fapolicyd"
+echo "Then: usermod -aG ${GROUP} ${WORKSHOP_USER}"
+echo "      runuser -u ${WORKSHOP_USER} -- runcon staff_u:staff_r:staff_t:s0 bash -l"
+echo "      /usr/bin/ping -c1 127.0.0.1"
+echo "Trust = known?; rules = who/how. Do not test this as root."
+echo "Cleanup: rm -f ${RULE} && fagenrules --load"

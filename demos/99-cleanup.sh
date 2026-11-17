@@ -22,7 +22,10 @@ find /etc/fapolicyd/trust.d -maxdepth 1 -type f \
   -delete 2>/dev/null || true
 
 echo "==> Removing rules.d workshop drop-ins"
-rm -f /etc/fapolicyd/rules.d/55-workshop-ping.rules \
+rm -f /etc/fapolicyd/rules.d/39-workshop-ping.rules \
+      /etc/fapolicyd/rules.d/39-ping.rules \
+      /etc/fapolicyd/rules.d/39-showcase-ping.rules \
+      /etc/fapolicyd/rules.d/55-workshop-ping.rules \
       /etc/fapolicyd/rules.d/55-showcase-ping.rules
 
 if command -v fagenrules >/dev/null; then
@@ -31,7 +34,9 @@ fi
 
 if systemctl is-active --quiet fapolicyd; then
   fapolicyd-cli --update 2>/dev/null || true
-  systemctl reload fapolicyd 2>/dev/null || systemctl restart fapolicyd || true
+  fagenrules --load 2>/dev/null \
+    || { fagenrules 2>/dev/null; fapolicyd-cli --reload-rules 2>/dev/null; } \
+    || systemctl restart fapolicyd || true
 fi
 
 echo "Cleanup done. (groups fapo_workshop / fapo_showcase left in place)"

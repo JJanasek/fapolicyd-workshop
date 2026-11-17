@@ -10,9 +10,13 @@ Order: `00-lab-prep` → exercises → showcases. Disposable VM. SELinux enforci
 ## Bootstrap
 
 ```bash
-sudo ./demos/00-lab-prep.sh    # fapo + staff_u + audit watch + sudo
-# lands as fapo; or: su - fapo
+sudo ./demos/00-lab-prep.sh    # fapo in staff_t (runcon) + audit + sudo→unconfined
+# plain "su - fapo" stays unconfined — no AVC; use prep or:
+#   runuser -u fapo -- runcon staff_u:staff_r:staff_t:s0 bash -l
 
+# or: sudo dnf install fapolicyd
+# audit (else deny_audit is quiet):
+#   sudo auditctl -a always,exit -F path=/etc/shadow -F perm=wa
 sudo fapolicyd-cli --check-status
 sudo fapolicyd-cli --list | head
 ```
@@ -48,24 +52,27 @@ Prefer trust trees over allow-rule sprawl.
 
 ```bash
 sudo groupadd -f fapo_workshop
-sudo tee /etc/fapolicyd/rules.d/55-workshop-ping.rules <<'EOF'
+sudo tee /etc/fapolicyd/rules.d/39-workshop-ping.rules <<'EOF'
 allow perm=any gid=fapo_workshop : trust=1 path=/usr/bin/ping
 deny_audit perm=execute all : trust=1 path=/usr/bin/ping
 EOF
 
-sudo fagenrules
+sudo fagenrules --load
+# or: sudo fagenrules && sudo fapolicyd-cli --reload-rules
 sudo fapolicyd-cli --check-rules --lint
-sudo systemctl reload fapolicyd
-sudo fapolicyd-cli --list | grep -n ping
+sudo fapolicyd-cli --list | nl -ba | grep -n ping
 ```
 
-Number above catch-all deny. Bad reload keeps previous ruleset.
+`systemctl reload fapolicyd` does **not** load rules (no ExecReload).
+Number **before** `allow perm=execute all : trust=1` (`42-trusted-elf`).
+`55-` is after that allow, so it never matches. Prove the ping lines sit above it.
+Test as `fapo`, not root (`uid=0 trust=1`). Failed in-daemon reload keeps the previous ruleset.
 
 ### Conf knobs
 
 - `permissive = 1|0`
-- `integrity = none|size|sha256` — try `size` before `sha256`
-- Optional: append `trust` to `syslog_format` while debugging
+- `integrity = none | size | ima | sha256` — try `size` before `sha256`
+- `fapolicyd-filter.conf`: `+` include / `-` exclude; `fapolicyd-cli --test-filter PATH` (import-time, not per access)
 
 ### Health
 
@@ -103,9 +110,10 @@ sudo fapolicyd-cli --list | nl -ba | sed -n '1,80p'
 ## Cheat sheet
 
 ```bash
-systemctl stop|start|reload fapolicyd
+systemctl stop|start fapolicyd
+fagenrules --load          # compile + signal daemon (not systemctl reload)
 sudo fapolicyd --permissive --debug-deny
-sudo fapolicyd-cli --list | --dump-db | --update
+sudo fapolicyd-cli --list | --dump-db | --update | --reload-rules
 sudo fapolicyd-cli --file add PATH --trust-file NAME
 sudo fapolicyd-cli --check-status|--check-metrics|--check-trustdb|--check-rules|--check-path
 sudo ausearch -m FANOTIFY -i --start recent
@@ -130,3 +138,9 @@ Denied?
 3. First-match: order is policy.  
 4. Root can disable this (by design).  
 5. Never hand-edit `compiled.rules`.  
+6. RPM trust scope: `fapolicyd-filter.conf` (man 5).  
+
+## Extras
+
+Unsupported helpers / fanotify notes:
+https://github.com/linux-application-whitelisting/fapolicyd-extras 

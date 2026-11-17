@@ -41,7 +41,7 @@
 \begin{frame}{How we get there}
   \begin{itemize}
     \item \textbf{Why} --- trust layer beside MAC (short)
-    \item \textbf{What} --- trust DB, rules, integrity
+    \item \textbf{What} --- trust, rules, conf, filter
     \item \textbf{Configure} --- exact workflows
     \item \textbf{Live} --- one end-to-end example
   \end{itemize}
@@ -82,11 +82,13 @@
 %=====================================================================
 \section{What you configure}
 
-\begin{frame}{Three places that matter}
+\begin{frame}{Four places that matter}
   \begin{enumerate}
     \item Trust DB --- known files
     \item \texttt{rules.d/} --- policy
     \item \texttt{fapolicyd.conf} --- mode / integrity / tuning
+    \item \texttt{fapolicyd-filter.conf} --- what RPM trust includes\\
+          {\small (man\,5 fapolicyd-filter.conf)}
   \end{enumerate}
 \end{frame}
 
@@ -121,8 +123,18 @@
 
 \begin{frame}{Trust --- two backends}
   \begin{itemize}
-    \item \texttt{rpmdb} --- from RPM (auto via plugin)
+    \item \texttt{rpmdb} --- from RPM (now inside \texttt{fapolicyd})
     \item \texttt{filedb} --- you add in \texttt{trust.d/}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Filter (RPM trust scope)}
+  \begin{itemize}
+    \item \texttt{/etc/fapolicyd/fapolicyd-filter.conf}
+    \item \texttt{+} include / \texttt{-} exclude paths (indented)
+    \item Applied when RPM trust is imported --- not per access
+    \item \texttt{fapolicyd-cli -{}-test-filter PATH}
+    \item Named here; not a hands-on drill
   \end{itemize}
 \end{frame}
 
@@ -163,8 +175,9 @@ deny_audit perm=any pattern=ld_so : all
 \begin{frame}{Default policy}
   \begin{itemize}
     \item Shipped set: \texttt{known-libs}
-    \item Trusted stuff mostly works
-    \item Unpackaged execute/open of code $\rightarrow$ deny
+    \item Trusted ELF mostly allowed (\texttt{42-trusted-elf})
+    \item Untrusted ELF / libs $\rightarrow$ deny
+    \item Shell scripts often allowed (\texttt{ftype=text/x-shellscript})
   \end{itemize}
 \end{frame}
 
@@ -172,6 +185,7 @@ deny_audit perm=any pattern=ld_so : all
   \begin{itemize}
     \item \texttt{none} --- default
     \item \texttt{size} --- good first step
+    \item \texttt{ima} --- IMA appraisal
     \item \texttt{sha256} --- costly; plan capacity
   \end{itemize}
 \end{frame}
@@ -181,27 +195,30 @@ deny_audit perm=any pattern=ld_so : all
 
 \begin{frame}{Workflow A --- install}
   \begin{enumerate}
-    \item \texttt{dnf install fapolicyd fapolicyd-selinux}\\
-          \texttt{rpm-plugin-fapolicyd}
+    \item \texttt{dnf install fapolicyd}\\
+          {\small (pulls what you need; \texttt{rpm-plugin-fapolicyd}
+          obsolete on rawhide)}
     \item Ensure $\ge$ 1 audit rule exists
-    \item \texttt{systemctl enable --now fapolicyd}
+    \item \texttt{systemctl enable -{}-now fapolicyd}
   \end{enumerate}
 \end{frame}
 
 \begin{frame}{Workflow A --- verify}
   \begin{itemize}
-    \item \texttt{fapolicyd-cli --check-status}
-    \item \texttt{fapolicyd-cli --list | head}
+    \item \texttt{fapolicyd-cli -{}-check-status}
+    \item \texttt{fapolicyd-cli -{}-list | head}
     \item Expect: Permissive false, trust entries $>$ 0
   \end{itemize}
 \end{frame}
 
-\begin{frame}{Audit rule (why)}
+\begin{frame}[fragile]{Audit rule (why)}
   \begin{itemize}
     \item Without any audit rule, \texttt{deny\_audit} is quiet
-    \item Dummy: \texttt{auditctl -w /etc/shadow -p w}
-    \item Watch $\neq$ chmod --- permissions unchanged
+    \item Any loaded rule is enough; e.g.:
   \end{itemize}
+  \begin{semiverbatim}
+auditctl -a always,exit -F path=/etc/shadow -F perm=wa
+  \end{semiverbatim}
 \end{frame}
 
 \begin{frame}{Workflow B --- trust an /opt app}
@@ -210,23 +227,23 @@ deny_audit perm=any pattern=ld_so : all
 
 \begin{frame}[fragile]{Trust /opt --- commands}
   \begin{semiverbatim}
-fapolicyd-cli --file add /opt/myapp \\
-  --trust-file myapp
-fapolicyd-cli --update
+fapolicyd-cli -{}-file add /opt/myapp \\
+  -{}-trust-file myapp
+fapolicyd-cli -{}-update
   \end{semiverbatim}
 \end{frame}
 
 \begin{frame}{Trust /opt --- remember}
   \begin{itemize}
-    \item \texttt{--file add} writes \texttt{trust.d/}
-    \item \texttt{--update} reloads the daemon DB
+    \item \texttt{-{}-file add} writes \texttt{trust.d/}
+    \item \texttt{-{}-update} reloads the daemon DB
     \item Prefer this over allow rules
   \end{itemize}
 \end{frame}
 
 \begin{frame}[fragile]{Inspect trust}
   \begin{semiverbatim}
-fapolicyd-cli --dump-db | grep myapp
+fapolicyd-cli -{}-dump-db | grep myapp
 ls /etc/fapolicyd/trust.d/
   \end{semiverbatim}
 \end{frame}
@@ -238,28 +255,28 @@ ls /etc/fapolicyd/trust.d/
 
 \begin{frame}[fragile]{Custom rule --- drop-in}
   \begin{semiverbatim}
-# /etc/fapolicyd/rules.d/55-ping.rules
-allow perm=any gid=wheel :
-  trust=1 path=/usr/bin/ping
-deny_audit perm=execute all :
-  trust=1 path=/usr/bin/ping
+# /etc/fapolicyd/rules.d/39-ping.rules  (one line per rule)
+# BEFORE 42-trusted-elf (allow execute trust=1)
+allow perm=any gid=fapo_workshop : trust=1 path=/usr/bin/ping
+deny_audit perm=execute all : trust=1 path=/usr/bin/ping
   \end{semiverbatim}
 \end{frame}
 
 \begin{frame}[fragile]{Custom rule --- apply}
   \begin{semiverbatim}
-fagenrules
-fapolicyd-cli --check-rules --lint
-systemctl reload fapolicyd
-fapolicyd-cli --list | grep ping
+fagenrules -{}-load
+fapolicyd-cli -{}-check-rules -{}-lint
+fapolicyd-cli -{}-list | grep ping
   \end{semiverbatim}
+  \vspace{0.4em}
+  {\small (\texttt{systemctl reload} does \emph{not} load rules)}
 \end{frame}
 
 \begin{frame}{Custom rule --- safety}
   \begin{itemize}
-    \item Number file so it sits \emph{above} deny-all
+    \item Number \emph{before} \texttt{allow \ldots trust=1} (42), not just deny-all
+    \item Confirm: \texttt{fapolicyd-cli -{}-list | nl}
     \item Bad reload keeps previous ruleset
-    \item Keep drop-ins sparse
   \end{itemize}
 \end{frame}
 
@@ -277,8 +294,8 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}{Conf --- integrity}
   \begin{itemize}
-    \item Start with \texttt{integrity = size} if you want more
-    \item Avoid jumping straight to sha256
+    \item \texttt{none | size | ima | sha256}
+    \item Try \texttt{size} before \texttt{sha256}
   \end{itemize}
 \end{frame}
 
@@ -286,7 +303,7 @@ fapolicyd-cli --list | grep ping
   \begin{enumerate}
     \item \texttt{ausearch -m AVC} $\rightarrow$ SELinux
     \item \texttt{ausearch -m FANOTIFY -i} $\rightarrow$ fapolicyd\\
-          {\small (compact events often lack path --- use \texttt{--debug-deny})}
+          {\small (compact events often lack path --- use \texttt{-{}-debug-deny})}
     \item Neither / unclear $\rightarrow$ debug-deny
   \end{enumerate}
 \end{frame}
@@ -301,7 +318,7 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}{If FANOTIFY deny}
   \begin{itemize}
-    \item Should be known software? $\rightarrow$ trust + \texttt{--update}
+    \item Should be known software? $\rightarrow$ trust + \texttt{-{}-update}
     \item Who/how exception? $\rightarrow$ \texttt{rules.d} drop-in
   \end{itemize}
 \end{frame}
@@ -309,7 +326,7 @@ fapolicyd-cli --list | grep ping
 \begin{frame}{Debug loop (1/2)}
   \begin{enumerate}
     \item \texttt{systemctl stop fapolicyd}
-    \item \texttt{fapolicyd --permissive --debug-deny}
+    \item \texttt{fapolicyd -{}-permissive -{}-debug-deny}
     \item Reproduce $\rightarrow$ \texttt{rule:N} \ldots \texttt{file=}
   \end{enumerate}
 \end{frame}
@@ -317,7 +334,7 @@ fapolicyd-cli --list | grep ping
 \begin{frame}{Debug loop (2/2)}
   \begin{enumerate}
     \setcounter{enumi}{3}
-    \item \texttt{fapolicyd-cli --list} $\rightarrow$ map N
+    \item \texttt{fapolicyd-cli -{}-list} $\rightarrow$ map N
     \item Fix trust or move allow above deny
     \item Restart service when done
   \end{enumerate}
@@ -325,9 +342,9 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}{CLI cheat}
   \begin{itemize}
-    \item Inspect: \texttt{--check-status}, \texttt{--list}, \texttt{--dump-db}
-    \item Change: \texttt{--file add/delete}, \texttt{--update}
-    \item Check: \texttt{--check-rules --lint}
+    \item Inspect: \texttt{-{}-check-status}, \texttt{-{}-list}, \texttt{-{}-dump-db}
+    \item Change: \texttt{-{}-file add/delete}, \texttt{-{}-update}
+    \item Check: \texttt{-{}-check-rules -{}-lint}
   \end{itemize}
 \end{frame}
 
@@ -349,8 +366,10 @@ fapolicyd-cli --list | grep ping
 
 \begin{frame}{Setup}
   \begin{itemize}
-    \item \texttt{sudo demos/00-lab-prep.sh} $\rightarrow$ lands as \texttt{fapo}
-    \item Or install + enable by hand, then \texttt{su - fapo}
+    \item \texttt{sudo demos/00-lab-prep.sh}\\
+          $\rightarrow$ \texttt{fapo} in \texttt{staff\_t} (via \texttt{runcon})
+    \item Plain \texttt{su -} stays \texttt{unconfined\_t} --- no AVC lab
+    \item \texttt{id -Z} should show \texttt{staff\_t}
   \end{itemize}
 \end{frame}
 
@@ -373,9 +392,9 @@ sudo chmod 755 /opt/fapo-workshop/my-ls
 
 \begin{frame}[fragile]{Configure fix (as fapo)}
   \begin{semiverbatim}
-sudo fapolicyd-cli --file add \\
-  /opt/fapo-workshop/my-ls --trust-file workshop
-sudo fapolicyd-cli --update
+sudo fapolicyd-cli -{}-file add \\
+  /opt/fapo-workshop/my-ls -{}-trust-file workshop
+sudo fapolicyd-cli -{}-update
 /opt/fapo-workshop/my-ls          # ALLOW
   \end{semiverbatim}
 \end{frame}
@@ -419,8 +438,10 @@ sudo fapolicyd-cli --update
 \begin{frame}{References}
   \begin{itemize}
     \item linux-application-whitelisting/fapolicyd
-    \item RHEL Security hardening --- fapolicyd
-    \item man: fapolicyd(8), rules(5), cli(8)
+    \item linux-application-whitelisting/fapolicyd-extras
+    \item man: \texttt{fapolicyd(8)}, \texttt{fapolicyd.conf(5)},\\
+          \texttt{fapolicyd.rules(5)}, \texttt{fapolicyd-cli(8)},\\
+          \texttt{fagenrules(8)}, \texttt{fapolicyd-filter.conf(5)}
   \end{itemize}
 \end{frame}
 

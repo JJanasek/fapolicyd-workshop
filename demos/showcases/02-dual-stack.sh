@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SHOWCASE: one binary — try for AVC and FANOTIFY.
-# FANOTIFY needs non-root. Prep maps fapo → staff_u so AVC can fire;
-# if id -Z is still unconfined_t, you may see FANOTIFY only.
+# FANOTIFY needs non-root. as_user wraps runcon → staff_t for AVC.
+# Plain su/runuser stay unconfined_t (FANOTIFY only).
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
 
@@ -11,7 +11,9 @@ chmod 1777 "${WORK}" 2>/dev/null || true
 BIN="${WORK}/dual"
 cp -a /usr/bin/id "${BIN}"
 chmod 755 "${BIN}"
-chcon -t user_tmp_t "${BIN}" 2>/dev/null || chcon -t tmp_t "${BIN}" 2>/dev/null || true
+# user_tmp_t is executable by staff_t while staff_exec_content is on.
+# tmp_t is not — that is the AVC. cp -a would otherwise keep bin_t.
+chcon -t tmp_t "${BIN}"
 
 echo "=== context ==="
 ls -lZ "${BIN}" 2>/dev/null || ls -l "${BIN}"
@@ -33,4 +35,6 @@ echo "=== fapolicyd FANOTIFY (no -f: compact events often lack path) ==="
 ausearch --start recent -m FANOTIFY -i 2>/dev/null | tail -25 || echo "(no FANOTIFY)"
 
 echo
-echo "restorecon alone → still FANOTIFY. trust alone → maybe still AVC (if confined)."
+echo "chcon -t bin_t → AVC gone, FANOTIFY remains (still untrusted)."
+echo "trust alone → FANOTIFY gone; AVC may remain while type is tmp_t."
+echo "restorecon on /var/tmp often changes nothing (file_contexts <<none>>)."
