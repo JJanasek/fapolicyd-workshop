@@ -369,16 +369,16 @@ filedb /opt/myapp/bin/x  SIZE  HASH
 type=FANOTIFY ... : resp=deny fan_type=rule_info fan_info=13
   subj_trust=unknown obj_trust=no
   \end{semiverbatim}
-  {\footnotesize \texttt{fan\_info} = rule number in \textbf{hex} (13 = rule 19). No path, no exe.}
+  {\footnotesize \texttt{fan\_info} = rule number, same as \texttt{fapolicyd-cli \dd list} (rule 13). No path, no exe.}
 
   \vspace{0.2em}
   Daemon line (debug mode, or syslog with \texttt{deny\_log}):
   \begin{semiverbatim}\footnotesize
-rule=19 dec=deny_audit perm=execute auid=1001 pid=4242
+rule=13 dec=deny_audit perm=execute auid=1001 pid=4242
   exe=/usr/bin/bash : path=/var/tmp/fapo-workshop/dual
   ftype=application/x-executable trust=0
   \end{semiverbatim}
-  {\footnotesize Same numbering as \texttt{fapolicyd-cli \dd list}. Record is real (F44); line is illustrative.}
+  {\footnotesize Record is real (Fedora 44); the daemon line is illustrative.}
 \end{frame}
 
 \begin{frame}{Dual stack}

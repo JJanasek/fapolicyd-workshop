@@ -146,7 +146,7 @@ Denied?
   ├─ "Operation not permitted" (EPERM)  → fapolicyd first
   ├─ ausearch -m AVC      → SELinux (label/policy)
   ├─ ausearch -m FANOTIFY → trust / rule order
-  │     (kernel ≥ 6.3: fan_info = rule number (hex), subj_trust, obj_trust;
+  │     (kernel ≥ 6.3: fan_info = rule number as in --list (ausearch -i), subj_trust, obj_trust;
   │      full line → deny_log or --debug-deny)
   │     ├─ known software? → trust DB + --update
   │     └─ who/how?        → rules.d drop-in

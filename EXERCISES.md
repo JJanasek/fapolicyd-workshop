@@ -66,8 +66,8 @@ sudo ausearch -ts recent -m FANOTIFY -i
 ```
 
 If empty: `sudo auditctl -l` (need ≥1 rule), re-deny, search again.  
-Kernel ≥ 6.3: the record carries `fan_info` (rule number as in
-`fapolicyd-cli --list`, but **hex** in the raw record: `fan_info=B` = rule 11),
+Kernel ≥ 6.3: the record carries `fan_info` (with `ausearch -i`: the rule
+number exactly as `fapolicyd-cli --list` prints it),
 `subj_trust`, `obj_trust`.  
 **Full line (`rule=N … path=…`)** → Exercise 4 (`--debug-deny`).
 

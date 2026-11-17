@@ -163,13 +163,15 @@ Denied?
   4) Unclear → deny_log or --debug-deny
 
 Reading the records:
-  FANOTIFY record, kernel >= 6.3: resp (2 = deny), fan_info = rule number
-  in HEX (same numbering as fapolicyd-cli --list), subj_trust / obj_trust
-  (0 no, 1 yes, 2 unknown).
+  FANOTIFY record, kernel >= 6.3: resp, fan_info = rule number, same
+  numbering as fapolicyd-cli --list, subj_trust / obj_trust.
   Daemon line: rule=N dec=… perm=… auid=… pid=… exe=… : path=… ftype=… trust=…
   The audit record on the slide is real (Fedora 44 lab VM, dual-stack
-  round 2): fan_info=13 is hex, so rule 19. With -i, ausearch prints
-  resp=deny and trust as no/yes/unknown. The daemon line is illustrative.
+  round 2): fan_info=13, and fapolicyd-cli --list shows
+  "13. deny_audit perm=execute all : all" — checked on the VM. With -i,
+  ausearch prints resp=deny and trust as no/yes/unknown. Always use -i:
+  the kernel writes fan_info with a hex format, so the raw record may
+  show D instead of 13 (not checked on the VM). The daemon line is illustrative.
   Point out: the audit record has no path — that is why you need the
   daemon line.
 
