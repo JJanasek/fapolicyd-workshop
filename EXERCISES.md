@@ -139,7 +139,7 @@ Ctrl-C → `sudo systemctl start fapolicyd` → `rm -f /tmp/xray-ls`.
 
 SELinux is asked before fapolicyd gets the fanotify event, so one attempt
 normally logs only the first denier. Use a fresh timestamp for each attempt
-(`--start recent` also shows FANOTIFY from earlier exercises).
+(`-ts recent` also shows FANOTIFY from earlier exercises).
 
 Check `id -Z` contains **`staff_t`** (not `unconfined_t`).
 If you used plain `su -`, re-enter:
