@@ -217,8 +217,9 @@ LIVE
 ================================================================================
 
 Prep: sudo ./demos/00-lab-prep.sh
-  → fapo via runcon staff_u:staff_r:staff_t:s0 (id -Z → staff_t).
+  → fapo via ssh to localhost (real login → pam_selinux → staff_t).
   Plain su -/runuser skip pam_selinux → stay unconfined → no AVC.
+  runcon from unconfined_t to staff_t is denied (process transition AVC).
   sudoers: ROLE=unconfined_r TYPE=unconfined_t so CLI/trust still work.
 
 Live: id -u ≠ 0 → copy ls → DENY (Operation not permitted) →

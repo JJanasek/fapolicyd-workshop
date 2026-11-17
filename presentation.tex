@@ -477,7 +477,7 @@ rule=11 dec=deny_audit perm=execute auid=1001 pid=4242
 \begin{frame}{Setup --- and why not root}
   \begin{itemize}
     \item \texttt{sudo demos/00-lab-prep.sh}
-          $\rightarrow$ \texttt{fapo} in \texttt{staff\_t} (via \texttt{runcon})
+          $\rightarrow$ \texttt{fapo} in \texttt{staff\_t} (via \texttt{ssh} login)
     \item Plain \texttt{su -} stays \texttt{unconfined\_t} --- no AVC lab
     \item \texttt{id -Z} should show \texttt{staff\_t}
     \item Root + trusted shell matches \texttt{uid=0 trust=1} and is \ok{allowed}

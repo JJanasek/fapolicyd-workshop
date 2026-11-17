@@ -5,7 +5,7 @@
 **Order:**
 
 1. `sudo ./demos/00-lab-prep.sh` — once as root (creates confined `fapo`)  
-2. You should land as **`fapo` in `staff_t`** (prep uses `runcon`; plain `su -` stays unconfined)  
+2. You should land as **`fapo` in `staff_t`** (prep logs in over `ssh`; plain `su -` stays unconfined)  
 3. Core path **1 → 2 → 3 → 5 → 6**  
 4. Exercise 4 — optional (`--debug-deny` / `rule:N`)  
 5. `demos/showcases/` — present later (3 scripts)  
@@ -24,7 +24,7 @@ Shipped roughly: `allow perm=any uid=0 trust=1 : all`
 | `sudo` | `fapolicyd-cli`, `systemctl`, `ausearch`, trust / rules |
 
 Always **`sudo fapolicyd-cli`** here (sudoers → `unconfined_t` for admin).
-Prep enters `staff_t` via `runcon` so dual-stack can emit AVC.
+Prep enters `staff_t` via an `ssh` login so dual-stack can emit AVC.
 
 For each exercise: **Predict → Do → Check** (notes file).
 Expected results: **[ANSWERS.md](ANSWERS.md)** — look only after you tried.
@@ -143,7 +143,7 @@ normally logs only the first denier. Use a fresh timestamp for each attempt
 
 Check `id -Z` contains **`staff_t`** (not `unconfined_t`).
 If you used plain `su -`, re-enter:
-`runuser -u fapo -- runcon staff_u:staff_r:staff_t:s0 bash -l`
+`sudo ssh -i /root/.ssh/fapo_workshop_ed25519 fapo@localhost`
 
 Use **`tmp_t`**. `user_tmp_t` is executable by `staff_t` while
 `staff_exec_content` is on (default), so you only see FANOTIFY.

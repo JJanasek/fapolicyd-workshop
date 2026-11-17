@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SHOWCASE: one binary, wrong for both layers — AVC first, then FANOTIFY.
 # SELinux is asked before fapolicyd, so each attempt logs the first denier.
-# FANOTIFY needs non-root. as_user wraps runcon → staff_t for AVC.
-# Plain su/runuser stay unconfined_t (FANOTIFY only).
+# FANOTIFY needs non-root. as_user logs in over ssh → staff_t for AVC.
+# Plain su/runuser stay unconfined_t (FANOTIFY only); runcon is denied.
 set -euo pipefail
 . "$(dirname "$0")/../lib.sh"
 

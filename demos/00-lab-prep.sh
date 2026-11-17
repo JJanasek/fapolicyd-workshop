@@ -2,7 +2,8 @@
 # Lab prep for fapolicyd power-user workshop.
 # Run as root on a disposable VM (Fedora/RHEL/CentOS Stream).
 #
-# Ends in a staff_t shell as workshop user (runcon — su alone stays unconfined).
+# Ends in a staff_t shell as workshop user, via ssh to localhost.
+# (su/runuser stay unconfined; runcon unconfined_t -> staff_t is denied.)
 # Shipped rule "allow perm=any uid=0 trust=1 : all" lets root+trusted
 # shell run untrusted binaries — so Exercise 2 as root will NOT deny.
 # SKIP_USER_SWITCH=1  — stay root (CI / automation)
@@ -10,7 +11,7 @@ set -euo pipefail
 
 WORKSHOP_USER="${WORKSHOP_USER:-fapo}"
 WORKSHOP_HOME="/home/${WORKSHOP_USER}"
-WORKSHOP_CONTEXT="${WORKSHOP_CONTEXT:-staff_u:staff_r:staff_t:s0}"
+WORKSHOP_KEY="${WORKSHOP_KEY:-/root/.ssh/fapo_workshop_ed25519}"
 SKIP_USER_SWITCH="${SKIP_USER_SWITCH:-0}"
 
 need_root() {
@@ -24,7 +25,7 @@ need_root
 
 echo "==> Installing packages"
 # fapolicyd alone is enough (rawhide: rpm-plugin-fapolicyd obsolete)
-dnf -y install fapolicyd policycoreutils-python-utils
+dnf -y install fapolicyd policycoreutils-python-utils openssh-server openssh-clients
 
 # ≥1 audit rule so deny_audit emits FANOTIFY events
 if ! auditctl -l 2>/dev/null | grep -q .; then
@@ -50,16 +51,28 @@ if getent group fapolicyd >/dev/null; then
   usermod -aG fapolicyd "${WORKSHOP_USER}" || true
 fi
 
-# Login mapping (ssh/console). su/runuser do NOT apply pam_selinux —
-# interactive shell below uses runcon for staff_t.
+# Login mapping, applied by pam_selinux on a real login (ssh/console).
+# su/runuser do NOT apply it, so the shell below is an ssh login.
 if command -v semanage >/dev/null && [[ -d /etc/selinux ]]; then
-  echo "==> Mapping ${WORKSHOP_USER} → staff_u (login + runcon target)"
+  echo "==> Mapping ${WORKSHOP_USER} → staff_u"
   if ! semanage login -l 2>/dev/null | awk '{print $1}' | grep -qx "${WORKSHOP_USER}"; then
     semanage login -a -s staff_u "${WORKSHOP_USER}" || true
   else
     semanage login -m -s staff_u "${WORKSHOP_USER}" || true
   fi
 fi
+
+# Dedicated key so root (and the showcases) can log in as the workshop user
+echo "==> ssh key for root -> ${WORKSHOP_USER}@localhost"
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+[[ -f "${WORKSHOP_KEY}" ]] || ssh-keygen -q -t ed25519 -N '' -C fapo-workshop -f "${WORKSHOP_KEY}"
+install -d -m 700 -o "${WORKSHOP_USER}" -g "${WORKSHOP_USER}" "${WORKSHOP_HOME}/.ssh"
+AUTH="${WORKSHOP_HOME}/.ssh/authorized_keys"
+touch "${AUTH}"
+grep -qxF "$(cat "${WORKSHOP_KEY}.pub")" "${AUTH}" || cat "${WORKSHOP_KEY}.pub" >>"${AUTH}"
+chown "${WORKSHOP_USER}:${WORKSHOP_USER}" "${AUTH}" && chmod 600 "${AUTH}"
+restorecon -RF "${WORKSHOP_HOME}/.ssh" 2>/dev/null || true
+systemctl enable --now sshd
 
 # staff_t cannot admin; sudo must land in unconfined for CLI/trust/ausearch
 mkdir -p /etc/sudoers.d
@@ -84,10 +97,12 @@ systemctl enable --now fapolicyd
 sleep 1
 fapolicyd-cli --check-status || true
 
+SSH_CMD="ssh -i ${WORKSHOP_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new ${WORKSHOP_USER}@localhost"
+
 echo
 echo "================================================================"
-echo "Prep done. Entering ${WORKSHOP_USER} in ${WORKSHOP_CONTEXT}."
-echo "Plain 'su - ${WORKSHOP_USER}' stays unconfined — use runcon (below)."
+echo "Prep done. Logging in as ${WORKSHOP_USER} over ssh (real login -> staff_t)."
+echo "su / runuser / runcon do not get you into staff_t."
 echo "Check: id -Z  → should contain staff_t"
 echo "sudo → unconfined_t (for fapolicyd-cli / systemctl / ausearch)."
 echo "Reset artifacts later: sudo ./demos/99-cleanup.sh"
@@ -99,13 +114,15 @@ if [[ "${SKIP_USER_SWITCH}" == "1" ]]; then
 fi
 
 if [[ ! -t 0 || ! -t 1 ]]; then
-  echo "Not a tty — run:"
-  echo "  runuser -u ${WORKSHOP_USER} -- runcon ${WORKSHOP_CONTEXT} bash -l"
+  echo "Not a tty — run as root:"
+  echo "  ${SSH_CMD}"
   exit 0
 fi
 
-cd "${WORKSHOP_HOME}" || cd /
-if command -v runcon >/dev/null && command -v selinuxenabled >/dev/null && selinuxenabled; then
-  exec runuser -u "${WORKSHOP_USER}" -- runcon "${WORKSHOP_CONTEXT}" bash -l
-fi
-exec su - "${WORKSHOP_USER}"
+CTX="$(${SSH_CMD} -o BatchMode=yes id -Z 2>/dev/null || true)"
+case "${CTX}" in
+  *staff_t*) ;;
+  *) echo "WARNING: ssh login gave context '${CTX:-<login failed>}', expected staff_t." >&2
+     echo "         Exercise 5 (dual stack) will not produce an AVC." >&2 ;;
+esac
+exec ${SSH_CMD}

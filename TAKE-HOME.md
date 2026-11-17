@@ -10,9 +10,9 @@ Order: `00-lab-prep` → exercises → showcases. Disposable VM. SELinux enforci
 ## Bootstrap
 
 ```bash
-sudo ./demos/00-lab-prep.sh    # fapo in staff_t (runcon) + audit + sudo→unconfined
+sudo ./demos/00-lab-prep.sh    # fapo in staff_t (ssh login) + audit + sudo→unconfined
 # plain "su - fapo" stays unconfined — no AVC; use prep or:
-#   runuser -u fapo -- runcon staff_u:staff_r:staff_t:s0 bash -l
+#   sudo ssh -i /root/.ssh/fapo_workshop_ed25519 fapo@localhost
 
 # or: sudo dnf install fapolicyd
 # audit (else deny_audit is quiet):

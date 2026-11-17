@@ -38,7 +38,7 @@ set -e
 
 echo
 echo "Then: usermod -aG ${GROUP} ${WORKSHOP_USER}"
-echo "      runuser -u ${WORKSHOP_USER} -- runcon staff_u:staff_r:staff_t:s0 bash -l"
+echo "      sudo ssh -i /root/.ssh/fapo_workshop_ed25519 ${WORKSHOP_USER}@localhost"
 echo "      /usr/bin/ping -c1 127.0.0.1"
 echo "Trust = known?; rules = who/how. Do not test this as root."
 echo "Cleanup: rm -f ${RULE} && fagenrules --load"
